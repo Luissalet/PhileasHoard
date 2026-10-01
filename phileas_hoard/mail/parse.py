@@ -365,14 +365,27 @@ def find_order(text: str, subject: str) -> str:
     return ""
 
 
+AMOUNT = r"(\d{1,3}(?:[.\u00a0 ]\d{3})+[.,]\d{2}|\d{1,7}[.,]\d{2})"
+
+
+def _amount(raw: str) -> Optional[float]:
+    raw = raw.replace("\u00a0", " ").replace(" ", "")
+    decimal = raw[-3]
+    whole = re.sub(r"[.,]", "", raw[:-3])
+    try:
+        return float(f"{whole}.{raw[-2:]}") if decimal in ".," else None
+    except ValueError:
+        return None
+
+
 def find_price(text: str) -> tuple[Optional[float], str]:
-    m = re.search(r"\btotal\b[^\n\d]{0,20}(\d{1,6}[.,]\d{2})\s*(€|eur)", text or "", re.I) or re.search(r"(\d{1,6}[.,]\d{2})\s*€", text or "")
+    """The order total ("precio total es 1.198,55 €", "Total 125,69€"), else the first amount in euros."""
+    m = (re.search(r"\btotal\b[^\n\d]{0,30}" + AMOUNT + r"\s*(?:€|eur)", text or "", re.I)
+         or re.search(r"(?<![\d.,])" + AMOUNT + r"\s*€", text or ""))
     if not m:
         return None, ""
-    try:
-        return float(m.group(1).replace(".", "").replace(",", ".") if "," in m.group(1) else m.group(1)), "EUR"
-    except ValueError:
-        return None, ""
+    value = _amount(m.group(1))
+    return (value, "EUR") if value is not None else (None, "")
 
 
 def _amazon_sub_ref(links: list[dict]) -> str:

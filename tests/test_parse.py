@@ -78,3 +78,9 @@ def test_numbers_formats_and_links():
     assert found and found.number == M.UPS and found.carrier == "ups"
     assert numbers.find("Llámanos al 917 890 111 o al 900 10 24 10", []) == []
     assert numbers.tracking_url("correos", M.CORREOS_CODE).endswith(M.CORREOS_CODE)
+
+
+def test_prices_with_thousands():
+    assert parse.find_price("y el precio total es 17.198,55 €, incluyendo entrega") == (17198.55, "EUR")
+    assert parse.find_price("Total\n125.69€") == (125.69, "EUR")
+    assert parse.find_price("sin importes") == (None, "")
