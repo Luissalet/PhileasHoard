@@ -210,7 +210,7 @@ class Services:
                                           "last_error", "archived", "muted", "history_only", "price", "currency", "origin_country",
                                           "service", "created_ts", "last_change_ts", "notes", "source", "fail_count")},
                 "carrier_name": numbers.carrier_name(s.get("carrier") or ""), "status_label": status_label(s.get("status") or UNKNOWN, lang),
-                "progress": progress(s.get("status") or UNKNOWN), "late": bool(extra.get("late")), "days_left": extra.get("days_left"),
+                "progress": progress(s.get("status") or UNKNOWN), "late": bool(extra.get("late")), "eta_time": extra.get("eta_time") or "", "days_left": extra.get("days_left"),
                 "eta_basis": (s.get("eta_basis") or [])[:3], "mail_only": not s.get("tracking_number")}
 
     def detail(self, sid: str) -> dict[str, Any]:

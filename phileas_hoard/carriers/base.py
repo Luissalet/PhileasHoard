@@ -32,6 +32,7 @@ class TrackResult:
     events: list[TrackEvent] = field(default_factory=list)
     eta_from: str = ""                        # ISO dates from the carrier
     eta_to: str = ""
+    eta_time: str = ""                        # a delivery time window on the day, e.g. "10:45–14:45"
     delivered_ts: Optional[float] = None
     origin_country: str = ""
     origin_city: str = ""

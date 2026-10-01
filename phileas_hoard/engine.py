@@ -377,13 +377,17 @@ class Engine:
                 last = max(result.events, key=lambda e: e.ts)
                 updates["last_location"] = last.location or s.get("last_location") or ""
                 updates["last_change_ts"] = max(last.ts, s.get("last_change_ts") or 0)
+            extra = dict(s.get("extra") or {})
+            if (result.eta_time or "") != extra.get("eta_time", ""):
+                extra["eta_time"] = result.eta_time or ""
+                updates["extra"] = extra
             if result.eta_from:
                 updates.update(carrier_eta_from=result.eta_from, carrier_eta_to=result.eta_to or result.eta_from)
                 if not s.get("carrier_eta_first"):
                     updates["carrier_eta_first"] = result.eta_from
             for key in ("origin_country", "origin_city", "dest_country", "service"):
                 value = getattr(result, key)
-                if value and not s.get(key):
+                if value and (not s.get(key) or (key == "service" and value != s.get(key))):
                     updates[key] = value
             if result.carrier and result.carrier != s.get("carrier"):
                 updates["carrier"] = result.carrier
@@ -543,7 +547,7 @@ class Engine:
                              (f"First scan" + (f" in {s.get('last_location')}" if s.get("last_location") else "") +
                               (f". Expected {when}." if when else "."))),
             "out_title": (f"Llega hoy: {name}", f"Arriving today: {name}"),
-            "out_body": (f"{carrier}: en reparto." + (f" {s.get('status_text')}" if s.get("status_text") and s.get("status_source") != "mail" else ""),
+            "out_body": (f"{carrier}: en reparto" + (f" entre las {(s.get('extra') or {}).get('eta_time')}" if (s.get('extra') or {}).get('eta_time') else "") + "." + (f" {s.get('status_text')}" if s.get("status_text") and s.get("status_source") != "mail" else ""),
                          f"{carrier}: out for delivery."),
             "delivered_title": (f"Entregado: {name}", f"Delivered: {name}"),
             "delivered_body": (s.get("status_text") or f"{carrier} lo ha entregado.", s.get("status_text") or f"{carrier} delivered it."),

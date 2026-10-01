@@ -5,8 +5,16 @@ import { dayLabel, daysBetween, isoDate, locale, shortClock, windowLabel } from 
 import { PROBLEM } from "../meta.js";
 import { Busy, Chip, Confidence, CopyButton, ExtLink, Icon, ICONS, Modal, Progress, StatusPill, Field, useBusy } from "./ui.jsx";
 
-// What to show as "when": { prefix, main, sub, late }
+// What to show as "when": { prefix, main, sub, late } — plus the carrier's time window on the day, when it gave one.
 export function etaInfo(s, today, t, lang) {
+  const info = etaInfoDay(s, today, t, lang);
+  if (s.eta_time && !["delivered", "returned", "available_for_pickup"].includes(s.status) && !info.late) {
+    info.sub = [info.sub, s.eta_time].filter(Boolean).join(" · ");
+  }
+  return info;
+}
+
+function etaInfoDay(s, today, t, lang) {
   const status = s.status;
   if (status === "delivered") return { prefix: t("eta_delivered"), main: s.delivered_ts ? dayLabel(new Date(s.delivered_ts * 1000), lang) : t("st_delivered"), sub: "" };
   if (status === "returned") return { prefix: "", main: t("st_returned"), sub: "" };

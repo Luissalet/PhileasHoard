@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import re
 import secrets
 import time
@@ -17,7 +18,7 @@ from typing import Any, Optional
 
 import httpx
 
-from ..model import (AVAILABLE_FOR_PICKUP, DELIVERED, EXCEPTION, FAILED_ATTEMPT, IN_TRANSIT, LABEL_CREATED, NOT_FOUND,
+from ..model import (AVAILABLE_FOR_PICKUP, CUSTOMS, DELIVERED, EXCEPTION, FAILED_ATTEMPT, IN_TRANSIT, LABEL_CREATED, NOT_FOUND,
                      OUT_FOR_DELIVERY, RETURNED)
 from .base import TrackEvent, TrackResult, fail, iso_date, latest_status, status_from_text
 
@@ -152,6 +153,39 @@ def _web_ts(act: dict[str, Any]) -> Optional[float]:
         return None
 
 
+# The page's milestones (``nameKey``) say where the parcel is better than the free text does.
+MILESTONES = {"cms.stapp.orderreceived": LABEL_CREATED, "cms.stapp.wehaveyourpkg": IN_TRANSIT, "cms.stapp.ontheway": IN_TRANSIT,
+              "cms.stapp.intransit": IN_TRANSIT, "cms.stapp.outfordelivery": OUT_FOR_DELIVERY, "cms.stapp.delivered": DELIVERED,
+              "cms.stapp.readyforpickup": AVAILABLE_FOR_PICKUP, "cms.stapp.returned": RETURNED, "cms.stapp.exception": EXCEPTION}
+PROGRESS_BAR = {"labelcreated": LABEL_CREATED, "orderreceived": LABEL_CREATED, "intransit": IN_TRANSIT, "outfordelivery": OUT_FOR_DELIVERY,
+                "delivered": DELIVERED, "exception": EXCEPTION, "returned": RETURNED, "readyforpickup": AVAILABLE_FOR_PICKUP}
+MONTH_KEYS = {"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12}
+COUNTRIES = {"united kingdom": "GB", "reino unido": "GB", "netherlands": "NL", "países bajos": "NL", "paises bajos": "NL",
+             "germany": "DE", "alemania": "DE", "spain": "ES", "españa": "ES", "france": "FR", "francia": "FR", "italy": "IT",
+             "italia": "IT", "belgium": "BE", "bélgica": "BE", "poland": "PL", "polonia": "PL", "portugal": "PT", "ireland": "IE",
+             "irlanda": "IE", "china": "CN", "united states": "US", "estados unidos": "US", "czech republic": "CZ",
+             "república checa": "CZ", "austria": "AT", "switzerland": "CH", "suiza": "CH", "hungary": "HU", "hungría": "HU"}
+
+
+def country_of(location: str) -> str:
+    """ISO code of the country at the end of a UPS location ("Dewsbury, United Kingdom" → GB)."""
+    tail = (location or "").split(",")[-1].strip().lower()
+    if re.fullmatch(r"[a-z]{2}", tail):
+        return tail.upper()
+    return COUNTRIES.get(tail, "")
+
+
+def _clean(text: Any) -> str:
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", str(text or "")))).strip()
+
+
+def _milestone_status(m: dict[str, Any]) -> str:
+    key = str(m.get("nameKey") or "").lower()
+    if key in MILESTONES:
+        return MILESTONES[key]
+    return status_from_text(str(m.get("name") or ""), "")
+
+
 def parse_web(data: dict[str, Any]) -> TrackResult:
     result = TrackResult(ok=True, source="ups_web", raw=data)
     details = (data or {}).get("trackDetails") or []
@@ -168,41 +202,70 @@ def parse_web(data: dict[str, Any]) -> TrackResult:
     events = []
     for act in d.get("shipmentProgressActivities") or []:
         ts = _web_ts(act)
-        text = re.sub(r"<[^>]+>", " ", str(act.get("activityScan") or "")).strip()
+        text = _clean(act.get("activityScan"))
         if ts is None or not text:
             continue
-        loc = str(act.get("location") or "").strip()
-        events.append(TrackEvent(ts, status_from_text(text, IN_TRANSIT), text, loc))
+        loc = _clean(act.get("location"))
+        status = _milestone_status(act.get("milestoneName") or {}) or status_from_text(text, IN_TRANSIT)
+        # an exception scan inside a milestone ("En tránsito") is still an exception
+        if act.get("exceptionCodes") or status_from_text(text, "") in (EXCEPTION, FAILED_ATTEMPT, RETURNED):
+            status = status_from_text(text, EXCEPTION)
+        events.append(TrackEvent(ts, status, text, loc))
     result.events = events
-    text = str(d.get("packageStatus") or "")
-    status = status_from_text(text, "") or latest_status(events, IN_TRANSIT)
-    if d.get("isDelivered"):
+    text = _clean(d.get("packageStatus"))
+    status = (_milestone_status(d.get("currentMilestone") or {})
+              or PROGRESS_BAR.get(str(d.get("progressBarType") or "").lower(), "")
+              or latest_status(events, IN_TRANSIT))
+    if d.get("isDelivered") or d.get("isPickedUpByCustomer"):
         status = DELIVERED
-    if (d.get("progressBarType") or "").lower() == "outfordelivery":
-        status = OUT_FOR_DELIVERY
-    if d.get("isDeliveredToUAP") or d.get("upsAccessPoint") and status != DELIVERED:
-        status = AVAILABLE_FOR_PICKUP if not d.get("isPickedUpByCustomer") else DELIVERED
-    if d.get("attentionNeeded") and status not in (DELIVERED, OUT_FOR_DELIVERY):
-        status = EXCEPTION if "intent" not in text.lower() else FAILED_ATTEMPT
+    elif d.get("isDeliveredToUAP") or (d.get("upsAccessPoint") and status not in (DELIVERED, OUT_FOR_DELIVERY)):
+        status = AVAILABLE_FOR_PICKUP
+    attention = d.get("attentionNeeded") or {}
+    needs = bool(attention.get("actions") or attention.get("isCorrectMyAddress")) if isinstance(attention, dict) else bool(attention)
+    if needs and status not in (DELIVERED, OUT_FOR_DELIVERY, AVAILABLE_FOR_PICKUP):
+        status = FAILED_ATTEMPT if re.search(r"intent|attempt", text, re.I) else EXCEPTION
+    if events and status == IN_TRANSIT:
+        last = max(events, key=lambda e: e.ts)
+        if last.status in (EXCEPTION, FAILED_ATTEMPT, RETURNED, CUSTOMS):
+            status = last.status
     result.status = status
     result.status_text = text or (max(events, key=lambda e: e.ts).description if events else "")
+    # scheduled day: "sdd" YYYYMMDD, else the day/month keys, else a dd/mm/yyyy date
+    sdd = str(d.get("sdd") or "")
     sched = d.get("scheduledDeliveryDateDetail") or {}
-    eta = sched.get("date") or d.get("scheduledDeliveryDate") or ""
-    m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", str(eta))
-    if m:
-        day, month, year = _dmy(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-        result.eta_from = result.eta_to = f"{year}-{month:02d}-{day:02d}"
-    elif eta:
-        result.eta_from = result.eta_to = iso_date(eta)
+    if re.fullmatch(r"\d{8}", sdd):
+        result.eta_from = result.eta_to = f"{sdd[:4]}-{sdd[4:6]}-{sdd[6:]}"
+    elif isinstance(sched, dict) and sched.get("dayNum") and sched.get("monthCMSKey"):
+        month = MONTH_KEYS.get(str(sched["monthCMSKey"]).rsplit(".", 1)[-1][:3].lower())
+        if month:
+            today = datetime.now()
+            year = today.year + (1 if month < today.month - 6 else 0)
+            result.eta_from = result.eta_to = f"{year}-{month:02d}-{int(sched['dayNum']):02d}"
+    else:
+        eta = d.get("scheduledDeliveryDate") or ""
+        m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", str(eta))
+        if m:
+            day, month, year = _dmy(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            result.eta_from = result.eta_to = f"{year}-{month:02d}-{day:02d}"
+    start, end = str(d.get("sdst") or "")[:5], str(d.get("sdt") or "")[:5]
+    if re.fullmatch(r"\d{2}:\d{2}", start) and re.fullmatch(r"\d{2}:\d{2}", end):
+        result.eta_time = f"{start}–{end}"
+    elif re.fullmatch(r"\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}", _clean(d.get("packageStatusTime"))):
+        result.eta_time = _clean(d.get("packageStatusTime")).replace(" - ", "–")
     if status == DELIVERED and events:
         result.delivered_ts = max(e.ts for e in events)
     frm = d.get("shipFromAddress") or {}
     to = d.get("shipToAddress") or {}
-    result.origin_country = str(frm.get("country") or frm.get("countryCode") or "")[:2].upper()
-    result.origin_city = str(frm.get("city") or "")
+    origin = str(frm.get("country") or frm.get("countryCode") or "")[:2].upper()
+    if not origin:
+        first = [m.get("location") for m in d.get("milestones") or [] if m.get("location")]
+        located = sorted(events, key=lambda e: e.ts)
+        origin = country_of(first[0] if first else "") or (country_of(located[0].location) if located else "")
+    result.origin_country = origin
+    result.origin_city = str(frm.get("city") or "") or (sorted(events, key=lambda e: e.ts)[0].location.split(",")[0] if events else "")
     result.dest_country = str(to.get("country") or to.get("countryCode") or "")[:2].upper()
-    result.service = str((d.get("additionalInformation") or {}).get("serviceInformation", {}).get("serviceName") or "") \
-        if isinstance(d.get("additionalInformation"), dict) else ""
+    info = d.get("additionalInformation") if isinstance(d.get("additionalInformation"), dict) else {}
+    result.service = _clean((info.get("serviceInformation") or {}).get("serviceName"))
     return result
 
 

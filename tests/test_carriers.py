@@ -131,3 +131,14 @@ def test_ups_web_through_the_browser_rung(tmp_path, clock):
         assert any(t.startswith("UPS ya lo tiene") for t in titles)
     finally:
         s2.stop()
+
+
+def test_ups_web_real_answer_after_pickup():
+    """A real answer (anonymised) a few hours after pickup: milestone, scheduled day and window, origin from the scan."""
+    r = ups.parse_web(load("ups_web_picked_up.json"))
+    assert r.found and r.status == "in_transit"                       # an empty attentionNeeded is not an incident
+    assert r.eta_from == r.eta_to == "2026-10-06" and r.eta_time == "10:45–14:45"
+    assert r.origin_country == "GB" and r.origin_city == "Dewsbury" and r.dest_country == "ES"
+    assert r.service == "UPS Standard®"
+    assert len(r.events) == 1 and r.events[0].description == "Escaneo de recogida" and r.events[0].location == "Dewsbury, United Kingdom"
+    assert ups.country_of("Köln, Alemania") == "DE" and ups.country_of("Venlo, NL") == "NL"
