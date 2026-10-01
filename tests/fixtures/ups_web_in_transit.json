@@ -1,0 +1,9 @@
+{"statusCode": "200", "statusText": "Correcto", "trackedDateTime": "02/10/2026 9:21 EST",
+ "trackDetails": [{"errorCode": null, "errorText": null, "trackingNumber": "1Z999AA10123456784", "packageStatus": "En tránsito",
+  "packageStatusCode": "005", "progressBarType": "InTransit", "isDelivered": false, "scheduledDeliveryDate": "05/10/2026",
+  "shipFromAddress": {"city": "Venlo", "country": "NL"}, "shipToAddress": {"city": "MADRID", "country": "ES"},
+  "shipmentProgressActivities": [
+   {"date": "02/10/2026", "time": "4:10 A.M.", "location": "Köln, Alemania", "activityScan": "Llegada a las instalaciones", "gmtDate": "20261002", "gmtTime": "02:10:00", "gmtOffset": "+02:00"},
+   {"date": "01/10/2026", "time": "8:44 P.M.", "location": "Venlo, Países Bajos", "activityScan": "Salida de las instalaciones", "gmtDate": "20261001", "gmtTime": "18:44:00", "gmtOffset": "+02:00"},
+   {"date": "01/10/2026", "time": "6:12 P.M.", "location": "Venlo, Países Bajos", "activityScan": "Origin Scan", "gmtDate": "20261001", "gmtTime": "16:12:00", "gmtOffset": "+02:00"},
+   {"date": "01/10/2026", "time": "1:03 P.M.", "location": "Países Bajos", "activityScan": "Shipper created a label, UPS has not received the package yet.", "gmtDate": "20261001", "gmtTime": "11:03:00", "gmtOffset": "+02:00"}]}]}

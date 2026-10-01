@@ -1,0 +1,9 @@
+{"shipments": [{"id": "JJD0000999000111222333444", "service": "parcel-de",
+  "origin": {"address": {"countryCode": "DE", "addressLocality": "Leipzig"}}, "destination": {"address": {"countryCode": "ES", "addressLocality": "Madrid"}},
+  "status": {"timestamp": "2026-08-21T10:12:00+02:00", "statusCode": "delivered", "status": "DELIVERED", "description": "Entregado", "location": {"address": {"addressLocality": "Madrid", "countryCode": "ES"}}},
+  "estimatedTimeOfDelivery": "2026-08-21",
+  "events": [
+   {"timestamp": "2026-08-21T10:12:00+02:00", "statusCode": "delivered", "description": "Entregado", "location": {"address": {"addressLocality": "Madrid", "countryCode": "ES"}}},
+   {"timestamp": "2026-08-21T07:02:00+02:00", "statusCode": "transit", "description": "En reparto", "location": {"address": {"addressLocality": "Madrid", "countryCode": "ES"}}},
+   {"timestamp": "2026-08-20T09:30:00+02:00", "statusCode": "transit", "description": "Shipment picked up", "location": {"address": {"addressLocality": "Leipzig", "countryCode": "DE"}}},
+   {"timestamp": "2026-08-19T20:00:00+02:00", "statusCode": "pre-transit", "description": "The shipment has been processed in the parcel center", "location": {"address": {"addressLocality": "Leipzig", "countryCode": "DE"}}}]}]}

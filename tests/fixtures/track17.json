@@ -1,0 +1,10 @@
+{"code": 0, "data": {"accepted": [{"number": "YT2600000000000001", "carrier": 190008, "track_info": {
+  "shipping_info": {"shipper_address": {"country": "CN", "city": "Shenzhen"}, "recipient_address": {"country": "ES"}},
+  "latest_status": {"status": "InTransit", "sub_status": "InTransit_CustomsProcessing"},
+  "latest_event": {"time_iso": "2026-07-12T08:00:00+08:00", "description": "Customs clearance in progress"},
+  "time_metrics": {"estimated_delivery_date": {"source": "17TRACK", "from": "2026-07-15T00:00:00+02:00", "to": "2026-07-18T00:00:00+02:00"}},
+  "tracking": {"providers": [{"provider": {"key": 190008, "name": "YunExpress"}, "events": [
+    {"time_iso": "2026-07-12T08:00:00+08:00", "time_utc": "2026-07-12T00:00:00Z", "description": "Customs clearance in progress", "location": "Madrid", "stage": "InTransit", "sub_status": "InTransit_CustomsProcessing"},
+    {"time_iso": "2026-07-08T10:00:00+08:00", "time_utc": "2026-07-08T02:00:00Z", "description": "Departed from origin airport", "location": "Shenzhen", "stage": "InTransit", "sub_status": "InTransit_Other"},
+    {"time_iso": "2026-07-07T10:00:00+08:00", "time_utc": "2026-07-07T02:00:00Z", "description": "Shipment information received", "location": "", "stage": "InfoReceived", "sub_status": "InfoReceived"}]}]}}}],
+ "rejected": []}}

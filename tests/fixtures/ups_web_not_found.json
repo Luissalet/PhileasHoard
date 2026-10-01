@@ -1,0 +1,3 @@
+{"statusCode": "200", "statusText": "Correcto", "isLoggedInUser": false, "trackedDateTime": "01/10/2026 9:21 EST",
+ "trackDetails": [{"errorCode": "504", "errorText": "Tracking number not found in database", "requestedTrackingNumber": "1Z999AA10123456784",
+  "trackingNumber": "1Z999AA10123456784", "packageStatus": null, "shipmentProgressActivities": null, "isDelivered": false}]}

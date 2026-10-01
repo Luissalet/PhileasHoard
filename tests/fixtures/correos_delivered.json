@@ -1,0 +1,9 @@
+{"type": "envio", "expedition": null, "shipment": [{"shipmentCode": "PK7ZXQ1234567890128013X", "pendingCustomsPay": null, "stateCode": null,
+ "events": [
+  {"eventDate": "15/09/2026", "eventTime": "13:17:22", "phase": "1", "desPhase": "PRE-ADMISIÓN", "colour": "V", "summaryText": "Prerregistrado", "extendedText": "Envío prerregistrado en los sistemas de Correos pendiente de depósito"},
+  {"eventDate": "16/09/2026", "eventTime": "11:50:37", "phase": "2", "desPhase": "EN CAMINO", "colour": "V", "summaryText": "Admitido.", "extendedText": "El envío ha tenido admisión en origen."},
+  {"eventDate": "16/09/2026", "eventTime": "17:00:33", "phase": "2", "desPhase": "EN CAMINO", "colour": "V", "summaryText": "Clasificado", "extendedText": "Envío clasificado en Centro Logístico"},
+  {"eventDate": "17/09/2026", "eventTime": "08:51:55", "phase": "2", "desPhase": "EN CAMINO", "colour": "V", "summaryText": "Clasificado", "extendedText": "Envío clasificado en Centro Logístico"},
+  {"eventDate": "17/09/2026", "eventTime": "21:16:19", "phase": "3", "desPhase": "EN ENTREGA", "colour": "V", "summaryText": "A disposición del destinatario", "extendedText": "Envio pendiente de recogida por el destinatario en la oficina"},
+  {"eventDate": "18/09/2026", "eventTime": "12:04:22", "phase": "4", "desPhase": "ENTREGADO", "colour": "V", "summaryText": "Entregado", "extendedText": "Envío entregado al destinatario o autorizado en oficina de Correos"}],
+ "error": {"errorCode": "0", "errorDesc": ""}, "packagesTotal": "1", "packageNumber": "1"}], "others": {"offices": [], "mailboxes": [], "citypaqs": []}}

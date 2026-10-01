@@ -1,0 +1,54 @@
+# Architecture
+
+```
+mail (Faustus account) ──► mail/faustus_mail.py (runs under Faustus's Python, IMAP search, HTML → text + links)
+                              │ JSON lines
+                              ▼
+                       mail/parse.py  ── numbers.py (formats, check digits, carrier links, redirects)
+                              │ MailFacts: kind, merchant, carrier, numbers, order, status, dates, promise, pickup
+                              ▼
+ carriers/ ◄──── engine.py ────► store.py / db.py (SQLite WAL: shipments, events, mails, notifications, runs)
+ (ups, correos,     │   linking · status rules · check pacing · housekeeping
+  dhl, track17,     │
+  browser)          ├──► eta.py + bizdays.py (explained estimate, delivery days, holidays)
+                    └──► notify/ (toast, family bus, ntfy, Telegram, email via Faustus)
+
+scheduler.py: lane "checks" (carrier checks of due shipments) · lane "mail" (mail scan every N min, housekeeping hourly)
+services.py: wiring + dashboard/detail/stats views · agent_tools.py: one tool catalogue for the UI, the REST bridge and MCP
+```
+
+## Mail
+
+`faustus_mail.py` is stdlib-only and imports nothing from Phileas: Phileas starts it with Faustus's Python inside the Faustus folder, writes one JSON request to stdin and reads one JSON line. It loads Faustus's `mcp_servers/email_server.py` to resolve accounts and connect, so passwords stay in Faustus. On Gmail it searches `[Gmail]/All Mail` with a `X-GM-RAW` query (shipping words, `newer_than:Nd`); elsewhere `SINCE` + `SUBJECT` terms. Already-read Message-IDs are skipped. Each message comes back as subject, sender, date, plain text (the HTML part converted, invisible pre-header padding removed) and its links, plus `from_self` when you sent it.
+
+## Classification and extraction (`mail/parse.py`)
+
+A score from evidence: tracking number (+5), status phrase in the subject or the first lines (+3; the four-step progress bar some shops print is ignored), sent by a carrier (+3), shipping or order words in the subject (+1 each), a delivery date (+1); minus food delivery and other non-parcel senders (−10), your own mail (−8), marketing subjects (−4), replies (−3). Shipping ≥ 4, maybe 2–3. Extraction: merchant from the sender's domain (and the store name for Shopify mail), carrier from the number, the sender or a phrase such as "enviado con UPS" (a bare word like "correos" is not enough), order numbers (Amazon, Google Store, generic), Amazon's package id from the tracking link, item names (quoted in the subject, or the line above a price), delivery dates and windows (relative days, weekdays, day-month, month-day), promises in hours or days (working days or calendar), pickup code, place and deadline.
+
+## Linking (`engine._match`)
+
+1. A tracking number already known. 2. Amazon package id. 3. The order number: the shipment without a package id when the mail brings one (a second package of the order becomes a new shipment); the one without a number when the mail brings a number. 4. A carrier's own mail without numbers: the most recent parcel of that carrier waiting for news. 5. The shop's earlier mail without any identifier. Otherwise a new shipment, except for a "delivered" note or an incident about something never seen.
+
+## Status rules (`engine.apply_status`)
+
+Statuses have a progress order. A status moves forward on any news; it moves back only on newer news from a carrier (not from an older mail); incidents apply when newer; "not found" never hides a known status; a final status (delivered, returned) is never undone automatically. Milestones are kept: ordered, shipped, first scan, out for delivery, delivered.
+
+## Carrier sources (`carriers/`)
+
+| Carrier | Order |
+|---|---|
+| UPS | official API (`UPS_CLIENT_ID/SECRET`) → public page in the off-screen browser → 17TRACK |
+| Correos | public locator JSON → 17TRACK |
+| DHL | official API (`DHL_API_KEY`) → 17TRACK |
+| Amazon Logistics | mail only |
+| others | 17TRACK (`TRACK17_KEY`) |
+
+The browser rung opens a real Edge window placed off-screen (carrier sites refuse headless browsers) with its own profile in `data/browser-profile`, and reads the JSON the page's own script loads. It never solves challenges. Every adapter returns a `TrackResult` (status, events, carrier dates, origin, destination, service) and the last raw answer is kept in `data/raw/<shipment>.json`.
+
+## Estimate (`eta.py`)
+
+Candidates, each a window with a weight: carrier date (shifted by the carrier's average lateness on your past parcels when it is at least half a day), shop date (Amazon's are trusted more), history of similar parcels (20th–85th percentile of delivery days from the shipping day, matched by carrier and origin, then shop and carrier, then shop, then carrier, at least two parcels), the shop's promise, typical times per carrier and origin zone. The heaviest window that is not in the past decides; overlapping windows raise the confidence and the carrier's or shop's date narrows a statistical window. When the carrier's and the shop's dates have all passed, the parcel is marked late and the window restarts today. Delivered, out for delivery today and waiting at a pickup point short-circuit the rest.
+
+## Checks and housekeeping
+
+Next check by status (30 min out for delivery, 1 h incidents or arriving within a day, 2 h in transit, 3 h label or customs, 6 h pickup, 2 h then 6 h not found), at least 1 h for the browser rung, backoff after failures, nothing between 23:00 and 07:00. Hourly housekeeping archives deliveries after five days, assumes delivery of mail-only parcels the day after "out for delivery", gives up numbers the carrier never knew after 14 days, flags parcels with no news for four delivery days and reminds pickup deadlines.
