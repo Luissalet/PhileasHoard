@@ -30,6 +30,14 @@ def test_reservation_markup_comes_back_as_html_and_is_readable():
     assert drafts and drafts[0].from_code == "MAD" and drafts[0].to_code == "LIS"
 
 
+def test_markup_with_template_slips_is_still_read():
+    """Trailing commas and a CDATA wrapper are common in booking templates; the shared reader copes with both."""
+    sloppy = LD[:-1] + ",}"
+    html = f'<script type="application/ld+json">//<![CDATA[\n{sloppy}\n//]]></script>'
+    drafts = extract.drafts_from_html(html)
+    assert drafts and drafts[0].from_code == "MAD"
+
+
 def test_plain_html_is_not_shipped_back():
     record = helper.message_to_record(email.message_from_bytes(raw("<html><body><p>Hola, tu pedido va en camino</p></body></html>")))
     assert "html" not in record

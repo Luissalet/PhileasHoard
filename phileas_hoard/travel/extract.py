@@ -6,17 +6,16 @@ EventReservation, ``reservationFor`` nesting and ReservationPackage (``subReserv
 
 from __future__ import annotations
 
-import json
 import re
 from html.parser import HTMLParser
 from typing import Any, Iterable, Optional
 
 from ..hoard_link.money import parse_amount
+from ..hoard_link.web.meta import jsonld_blocks
 from .airlines import AIRLINES, split_flight_number
 from .draft import SegmentDraft
 from .model import BUS, CANCELLED, CAR, CONFIRMED, EVENT, FERRY, FLIGHT, LODGING, TRAIN
 
-LD_BLOCK = re.compile(r"<script\b[^>]*type\s*=\s*[\"']?application/ld\+json[\"']?[^>]*>(.*?)</script\s*>", re.I | re.S)
 RESERVATION_KIND = {
     "FlightReservation": FLIGHT, "TrainReservation": TRAIN, "BusReservation": BUS, "BoatReservation": FERRY,
     "LodgingReservation": LODGING, "RentalCarReservation": CAR, "EventReservation": EVENT,
@@ -30,18 +29,8 @@ def has_markup(html: str) -> bool:
 
 # ------------------------------------------------------------------ readers
 def _json_blocks(html: str) -> list[Any]:
-    out = []
-    for raw in LD_BLOCK.findall(html or ""):
-        raw = re.sub(r"^\s*<!\[CDATA\[|\]\]>\s*$", "", raw.strip())
-        raw = re.sub(r"<!--|-->", "", raw)
-        try:
-            out.append(json.loads(raw))
-        except ValueError:
-            try:
-                out.append(json.loads(re.sub(r",\s*([}\]])", r"\1", raw)))      # trailing commas are common in templates
-            except ValueError:
-                continue
-    return out
+    """The JSON-LD payloads of the mail, read leniently by the shared reader (trailing commas, CDATA, escaped quotes)."""
+    return jsonld_blocks(html or "")[0]
 
 
 class _Micro(HTMLParser):
