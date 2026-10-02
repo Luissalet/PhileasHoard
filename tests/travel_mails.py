@@ -145,6 +145,12 @@ MICRODATA_TRAIN = mail("mi1", 3, "tickets@rail-example.test", "Your train ticket
 NOISE = mail("nz1", 2, "news@vueling.com", "Ofertas de invierno desde 19 euros",
              "Descubre nuestras ofertas. Vuela a Roma, París o Londres con descuento. Reserva ya tu próximo viaje.")
 
+HARD = mail("hard", 2, "agent@viajes-example.test", "Su viaje está listo",
+            "Estimado cliente:\nSu reserva con localizador PQ7R2X incluye el vuelo de Sevilla a Bilbao.\n"
+            "Salimos el 3 de diciembre de 2026 por la tarde (18:20) desde Sevilla y llegamos a Bilbao a las 19:35.\nNúmero de vuelo: V7 4521")
+HARD_EVIDENCE = "Salimos el 3 de diciembre de 2026 por la tarde (18:20) desde Sevilla y llegamos a Bilbao a las 19:35."
+
+
 ALL_BY_SENDER = {"iberia": IBERIA, "vueling": VUELING, "air_europa": AIR_EUROPA, "ryanair": RYANAIR, "easyjet": EASYJET, "volotea": VOLOTEA,
                  "binter": BINTER, "tap": TAP, "lufthansa": LUFTHANSA, "ba": BA, "air_france": AIR_FRANCE, "renfe": RENFE, "iryo": IRYO,
                  "ouigo": OUIGO, "alsa": ALSA, "flixbus": FLIXBUS, "balearia": BALEARIA, "booking": BOOKING, "airbnb": AIRBNB, "hertz": HERTZ,

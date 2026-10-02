@@ -162,14 +162,12 @@ def fake_chat(payload):
     return chat
 
 
-HARD = tm.mail("hard", 2, "agent@viajes-example.test", "Su viaje está listo",
-               "Estimado cliente:\nSu reserva con localizador PQ7R2X incluye el vuelo de Sevilla a Bilbao.\n"
-               "El vuelo sale el 3 de diciembre de 2026 a las 18:20 desde el aeropuerto de Sevilla (SVQ) y llega a Bilbao (BIO) a las 19:35.\nNumero de vuelo: V7 4521")
+HARD = tm.HARD
 
 
 def test_model_pass_keeps_evidence_and_flags_source():
     seg = {"kind": "flight", "booking_ref": "PQ7R2X", "number": "V74521", "from_code": "SVQ", "to_code": "BIO", "dep_local": "2026-12-03T18:20",
-           "arr_local": "2026-12-03T19:35", "change": "new", "evidence": ["El vuelo sale el 3 de diciembre de 2026 a las 18:20 desde el aeropuerto de Sevilla (SVQ)"]}
+           "arr_local": "2026-12-03T19:35", "change": "new", "evidence": [tm.HARD_EVIDENCE]}
     out = llm.read_with_model(HARD, fake_chat({"segments": [seg]}))
     assert out["status"] == "ok" and out["model"] == "test-model" and len(out["drafts"]) == 1
     d = out["drafts"][0]
@@ -178,7 +176,7 @@ def test_model_pass_keeps_evidence_and_flags_source():
 
 def test_model_pass_drops_invented_segments():
     invented = {"kind": "flight", "from_code": "MAD", "to_code": "LHR", "dep_local": "2026-12-03T18:20", "evidence": ["Su vuelo a Londres sale a las 18:20 del Terminal 4"]}
-    badtime = {"kind": "flight", "from_code": "SVQ", "to_code": "BIO", "dep_local": "tomorrow evening", "evidence": ["El vuelo sale el 3 de diciembre de 2026 a las 18:20"]}
+    badtime = {"kind": "flight", "from_code": "SVQ", "to_code": "BIO", "dep_local": "tomorrow evening", "evidence": ["Salimos el 3 de diciembre de 2026 por la tarde (18:20)"]}
     out = llm.read_with_model(HARD, fake_chat({"segments": [invented, badtime]}))
     assert out["status"] == "ok" and out["drafts"] == []
 

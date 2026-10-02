@@ -232,9 +232,9 @@ class Store:
 
     # ------------------------------------------------------------------ notifications and runs
     def add_notification(self, *, shipment_id: Optional[str], type_: str, severity: str, title: str, body: str,
-                         results: list[dict[str, Any]], dedupe: str) -> int:
-        cur = self.db.execute("INSERT INTO notifications(ts, shipment_id, type, severity, title, body, results, dedupe) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                              (self.clock(), shipment_id, type_, severity, title, body, json.dumps(results), dedupe))
+                         results: list[dict[str, Any]], dedupe: str, trip_id: Optional[str] = None) -> int:
+        cur = self.db.execute("INSERT INTO notifications(ts, shipment_id, trip_id, type, severity, title, body, results, dedupe) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                              (self.clock(), shipment_id, trip_id, type_, severity, title, body, json.dumps(results), dedupe))
         return int(cur.lastrowid)
 
     def notified(self, dedupe: str) -> bool:

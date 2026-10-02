@@ -206,6 +206,13 @@ class TravelStore:
         rows = self.db.query("SELECT * FROM trip_expenses WHERE trip_id = ? ORDER BY date, created_ts", (trip_id,))
         return [_load(r, EXPENSE_JSON) for r in rows]  # type: ignore[misc]
 
+    def _set_expense_trip(self, eid: str, trip_id: str, payer_id: str, split: dict[str, Any]) -> None:
+        self.db.execute("UPDATE trip_expenses SET trip_id = ?, payer_id = ?, split = ?, updated_ts = ? WHERE id = ?",
+                        (trip_id, payer_id, json.dumps(split, ensure_ascii=False), self.clock(), eid))
+
+    def segments_by_ids(self, ids: list[str]) -> list[dict[str, Any]]:
+        return [self.segment(i) for i in ids]
+
     def delete_expense(self, eid: str) -> None:
         self.expense(eid)
         self.db.execute("DELETE FROM trip_expenses WHERE id = ?", (eid,))

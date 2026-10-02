@@ -12,13 +12,21 @@ LABELS: dict[str, dict[str, str]] = {
     "en": {N_NEW: "New shipment", N_STATUS: "Status change", N_OUT: "Out for delivery", N_DELIVERED: "Delivered", N_PICKUP: "Ready for pickup",
            N_PICKUP_DEADLINE: "Pickup deadline", N_PROBLEM: "Problem", N_ETA: "New date", N_STALE: "No news", "test": "Test"},
 }
+LABELS["es"].update({"trip_new": "Nuevo viaje", "trip_tomorrow": "Viaje mañana", "checkin_open": "Check-in abierto", "checkin_closing": "Check-in a punto de cerrar",
+                     "lodging_day": "Check-in del alojamiento", "departure": "Salida", "segment_changed": "Cambio en la reserva",
+                     "segment_cancelled": "Reserva cancelada", "document_problem": "Documento"})
+LABELS["en"].update({"trip_new": "New trip", "trip_tomorrow": "Trip tomorrow", "checkin_open": "Check-in open", "checkin_closing": "Check-in closing",
+                     "lodging_day": "Stay check-in", "departure": "Departure", "segment_changed": "Booking changed",
+                     "segment_cancelled": "Booking cancelled", "document_problem": "Document"})
 assert all(t in LABELS["es"] and t in LABELS["en"] for t in NOTIFY_TYPES)
 
-WORDS = {"es": {"open": "Ver seguimiento", "test_title": "Prueba de notificación", "test_body": "Si lo lees, este canal funciona."},
-         "en": {"open": "Open tracking", "test_title": "Notification test", "test_body": "If you can read this, the channel works."}}
+WORDS = {"es": {"open": "Ver seguimiento", "open_trip": "Abrir enlace", "test_title": "Prueba de notificación", "test_body": "Si lo lees, este canal funciona."},
+         "en": {"open": "Open tracking", "open_trip": "Open link", "test_title": "Notification test", "test_body": "If you can read this, the channel works."}}
+
+from ..travel.notices import TAGS as TRAVEL_TAGS  # noqa: E402
 
 TYPE_TAGS = {N_NEW: "package", N_STATUS: "truck", N_OUT: "truck", N_DELIVERED: "white_check_mark", N_PICKUP: "round_pushpin",
-             N_PICKUP_DEADLINE: "alarm_clock", N_PROBLEM: "warning", N_ETA: "calendar", N_STALE: "hourglass", "test": "bell"}
+             N_PICKUP_DEADLINE: "alarm_clock", N_PROBLEM: "warning", N_ETA: "calendar", N_STALE: "hourglass", "test": "bell", **TRAVEL_TAGS}
 
 
 def label(kind: str, lang: str = "es") -> str:

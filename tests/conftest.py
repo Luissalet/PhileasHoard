@@ -60,8 +60,8 @@ class FakeMail:
         self.messages = list(messages or [])
         self.calls: list[dict[str, Any]] = []
 
-    def scan(self, *, since_days, limit, skip, query=""):
-        self.calls.append({"since_days": since_days, "limit": limit, "skip": len(skip), "query": query})
+    def scan(self, *, since_days, limit, skip, query="", **extra):
+        self.calls.append({"since_days": since_days, "limit": limit, "skip": len(skip), "query": query, **extra})
         skip = set(skip)
         return {"ok": True, "accounts": [{"account": "test", "folder": "INBOX", "matches": len(self.messages)}],
                 "messages": [m for m in self.messages if m["message_id"] not in skip][:limit]}
@@ -119,9 +119,9 @@ def fake_mail():
     return FakeMail()
 
 
-def build(config, clock, fake_mail, transport=None, browser=None):
+def build(config, clock, fake_mail, transport=None, browser=None, **extra):
     return Services(config, clock_fn=clock, http_transport=transport or _no_network(), notifier=FakeNotifier(), browser=browser or NoBrowser(),
-                    mail_source=fake_mail)
+                    mail_source=fake_mail, **extra)
 
 
 @pytest.fixture
@@ -143,3 +143,20 @@ def client(config, clock, fake_mail):
 
 def tool(svc: Services, tool_name: str, /, **arguments) -> Any:
     return call_tool(svc, tool_name, arguments)
+
+
+class FakeHub:
+    """Stands in for ``family.call``: answers per (app, tool) from a table; records what was asked."""
+
+    def __init__(self, answers: dict | None = None):
+        self.answers = dict(answers or {})
+        self.calls: list[tuple[str, str, dict]] = []
+
+    def __call__(self, app, tool, arguments=None, **kw):
+        self.calls.append((app, tool, dict(arguments or {})))
+        answer = self.answers.get((app, tool))
+        if callable(answer):
+            answer = answer(arguments or {})
+        if answer is None:
+            return {"ok": False, "app": app, "tool": tool, "status": None, "error": "hub not reachable at http://127.0.0.1:0"}
+        return {"ok": True, "app": app, "tool": tool, "status": 200, "result": answer}

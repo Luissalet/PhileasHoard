@@ -42,7 +42,7 @@ def _date_of(ts: Optional[float]) -> Optional[date]:
 class Engine:
     def __init__(self, store: Any, carriers: Any, notifier: Any, *, settings_get: Callable[[str, Optional[str]], Optional[str]],
                  settings_set: Callable[[str, str], None], emit: Callable[[str, dict], None] = lambda t, d: None,
-                 clock: Callable[[], float] = time.time, raw_dir: Any = None, mail_source: Any = None):
+                 clock: Callable[[], float] = time.time, raw_dir: Any = None, mail_source: Any = None, travel: Any = None):
         self.store = store
         self.carriers = carriers
         self.notifier = notifier
@@ -52,6 +52,7 @@ class Engine:
         self.clock = clock
         self.raw_dir = raw_dir
         self.mail = mail_source
+        self.travel = travel          # the travel facet (bookings from mail); None keeps the engine parcels-only
 
     # ------------------------------------------------------------------ settings
     def setting(self, key: str, default: str = "") -> str:
@@ -97,13 +98,17 @@ class Engine:
         self.set("mail.last_scan_ts", str(self.clock()))
         self.set("mail.last_error", "")
         detail = f"{len(messages)} new mails, {summary['shipping']} shipping, {summary['created']} new shipments, {summary['linked']} updates"
+        if summary.get("travel"):
+            detail += f", {summary['travel']} travel"
         self.store.add_run("mail", "", True, int((time.monotonic() - t0) * 1000), detail)
         return {"ok": True, "accounts": answer.get("accounts") or [], "messages": len(messages), "error": answer.get("error") or "", **summary}
 
     def ingest(self, messages: list[dict[str, Any]], *, bootstrap: bool = False, force: bool = False) -> dict[str, Any]:
         """Analyze and file messages, oldest first so statuses build up in order."""
-        out = {"shipping": 0, "maybe": 0, "noise": 0, "created": 0, "linked": 0, "shipments": []}
+        out = {"shipping": 0, "maybe": 0, "noise": 0, "created": 0, "linked": 0, "shipments": [], "travel": 0, "trips": []}
         known = set(self.store.known_message_ids(20000))
+        if self.travel is not None:
+            self.travel.begin_batch()
         for message in sorted(messages, key=lambda m: m.get("ts") or 0):
             mid = str(message.get("message_id") or "")
             if not mid or mid in known:
@@ -112,6 +117,15 @@ class Engine:
             facts = analyze(message)
             if force and facts.kind != "shipping" and (facts.numbers or facts.order_ref or facts.status):
                 facts.kind = "shipping"
+            if self.travel is not None:
+                booked = self._travel_first(message, facts, bootstrap=bootstrap, force=force)
+                if booked is not None:
+                    out["travel"] += 1
+                    for tid in (booked["summary"].get("trips") or []):
+                        if tid not in out["trips"]:
+                            out["trips"].append(tid)
+                    self.store.save_mail(message, kind="travel", score=booked["score"], facts=booked["facts"], shipment_id=None, state=booked["state"])
+                    continue
             out[facts.kind] += 1
             sid, created = None, False
             if facts.kind == "shipping":
@@ -124,12 +138,23 @@ class Engine:
             if facts.kind == "maybe":
                 state = "new"
             self.store.save_mail(message, kind=facts.kind, score=facts.score, facts=facts.to_dict(), shipment_id=sid, state=state)
+        if self.travel is not None and out["trips"]:
+            out["trips"] = self.travel.existing_trips(out["trips"])
         for sid in out["shipments"]:
             try:
                 self.recompute_eta(sid, quiet=bootstrap)
             except Exception:  # noqa: BLE001
                 log.exception("eta failed for %s", sid)
         return out
+
+    def _travel_first(self, message: dict[str, Any], parcel: Any, *, bootstrap: bool, force: bool) -> Optional[dict[str, Any]]:
+        """A booking mail is filed by the travel facet. A mail the parcel rules read as shipping stays a parcel unless the sender is a
+        travel company or the mail carries reservation markup. A failure here never costs the parcel pass."""
+        try:
+            return self.travel.process_mail(message, bootstrap=bootstrap, force=force, parcel_shipping=parcel.kind == "shipping")
+        except Exception:  # noqa: BLE001
+            log.exception("travel pass failed for %s", message.get("message_id"))
+            return None
 
     def _match(self, facts: Any, message: dict[str, Any]) -> Optional[dict[str, Any]]:
         for found in facts.numbers:
@@ -243,6 +268,8 @@ class Engine:
         row = self.store.mail(message_id)
         if row is None:
             raise KeyError(f"No mail {message_id}")
+        if row.get("kind") == "travel" and self.travel is not None:
+            return {"travel": self.travel.accept_mail(message_id)}
         facts = MailFacts(**{k: v for k, v in (row.get("facts") or {}).items() if k in MailFacts.__dataclass_fields__})
         facts.kind = "shipping"
         message = {"message_id": message_id, "ts": row.get("ts"), "subject": row.get("subject"), "from_address": row.get("from_address")}

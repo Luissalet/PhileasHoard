@@ -83,7 +83,16 @@ class SegmentDraft:
         self.booking_ref = (self.booking_ref or "").strip().upper()[:20]
         self.number = re.sub(r"\s+", "", (self.number or "").upper())[:12]
         self.passengers = [p for p in dict.fromkeys(_first_name(p) for p in self.passengers) if p][:9]
+        if self.kind == LODGING and not self.from_city:
+            parts = [p.strip() for p in re.split(r"[,\n]", self.address or "") if p.strip()]
+            for part in [*reversed(parts), self.from_name or self.provider]:
+                city, country = airports.city_of(re.sub(r"^\d{4,5}(?:-\d{3})?\s+", "", part or ""))
+                if city:
+                    self.from_city, self.from_country = city, self.from_country or country
+                    break
         for side in ("from", "to"):
+            if self.kind == LODGING:
+                break
             code = getattr(self, f"{side}_code").strip().upper()
             setattr(self, f"{side}_code", code)
             info = airports.lookup(code) if code else None

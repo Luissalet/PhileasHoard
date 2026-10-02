@@ -12,6 +12,7 @@ from datetime import date, datetime
 from typing import Any, Optional
 
 from . import extract, rules
+from .scan import find_dates, find_times
 from .draft import SegmentDraft
 from .model import CANCELLED, CONFIRMED
 
@@ -20,6 +21,11 @@ BOOKING_CUE = re.compile(r"reserva|booking|billete|ticket|confirmaci[oó]n|confi
 PROMO_CUE = re.compile(r"oferta|descuento|chollo|newsletter|boletín|suscr[ií]b|promo|rebajas|black friday|ahorra|desde \d+\s*(?:€|euros?)|"
                        r"\bsale\b|deals?\b|encuesta|valora tu|opini[oó]n|survey|rate your|puntos|millas|miles|loyalty|club\b", re.I)
 FLIGHT_NO = re.compile(r"\b[A-Z0-9]{2}\s?\d{2,4}\b")
+
+
+def _has_date_and_time(text: str, ref: date) -> bool:
+    lines = rules.clean_lines(text)
+    return any(find_dates(line, ref) for line in lines) and any(find_times(line) for line in lines)
 
 
 @dataclass
@@ -88,8 +94,9 @@ def analyze_travel(message: dict[str, Any], *, default_tz: str = "Europe/Madrid"
     if r.drafts:
         score += 20
         facts.reasons.append("route and date")
-    elif FLIGHT_NO.search(text) and rules.FLIGHT_CUE.search(text):
-        score += 8
+    elif r.kinds and _has_date_and_time(text, ref):
+        score += 25                                             # travel words with a date and a time, but no route the rules could read
+        facts.reasons.append("travel words, date and time")
     if PROMO_CUE.search(subject) and not r.ref and not schema:
         score -= 50
         facts.reasons.append("looks promotional")

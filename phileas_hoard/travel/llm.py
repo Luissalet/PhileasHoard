@@ -108,8 +108,9 @@ def _clean(raw: dict[str, Any], haystack: str) -> Optional[SegmentDraft]:
     d.carrier = str(raw.get("carrier") or "")[:60]
     for side in ("from", "to"):
         code = str(raw.get(f"{side}_code") or "").strip().upper()
-        if code and airports.known(code) and code.lower() in haystack:
-            setattr(d, f"{side}_code", code)
+        info = airports.lookup(code) if code else None
+        if info and (code.lower() in haystack or _squash(info["city"]) in haystack or _squash(airports.city_name(info["city"], "es")) in haystack):
+            setattr(d, f"{side}_code", code)                    # the code is in the mail, or the airport's city is
         setattr(d, f"{side}_name", str(raw.get(f"{side}_name") or "").strip()[:80])
     d.dep_local = str(raw.get("dep_local") or "").strip()[:16]
     d.arr_local = str(raw.get("arr_local") or "").strip()[:16]

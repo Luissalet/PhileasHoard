@@ -349,8 +349,15 @@ class Notifier:
                    "summary": event.get("summary") or body, "url": event.get("url"), "shipment_id": event.get("shipment_id"),
                    "status": event.get("status"), "eta_likely": event.get("eta_likely"), "label": event.get("label"),
                    "carrier": event.get("carrier"), "tracking_number": event.get("tracking_number")}
+        topic = "phileas.update"
+        if event.get("trip_id"):             # a travel notification: its own event with the trip's ids and dates only
+            topic = "phileas.trip.update"
+            payload = {"event_id": event.get("id"), "type": event.get("type"), "severity": event.get("severity"), "title": title,
+                       "summary": event.get("summary") or body, "url": event.get("url"), "trip_id": event.get("trip_id"),
+                       "segment_id": event.get("segment_id"), "trip_title": event.get("trip_title"), "start_date": event.get("start_date"),
+                       "end_date": event.get("end_date")}
         try:
-            accepted = family.emit("phileas.update", payload)
+            accepted = family.emit(topic, payload)
         except Exception:  # noqa: BLE001 — emit is documented not to raise; be safe anyway
             accepted = False
         return "" if accepted else "hub not configured"
@@ -386,7 +393,7 @@ class Notifier:
             text += "\n" + html.escape(body)
         url = _http_url(event.get("url"))
         if url:
-            text += f'\n<a href="{html.escape(url, quote=True)}">{WORDS[self._lang()]["open"]}</a>'
+            text += f'\n<a href="{html.escape(url, quote=True)}">{WORDS[self._lang()]["open_trip" if event.get("trip_id") else "open"]}</a>'
         payload = {"chat_id": chat, "text": text[:4000], "parse_mode": "HTML", "disable_web_page_preview": False}
         try:
             with self._client() as client:

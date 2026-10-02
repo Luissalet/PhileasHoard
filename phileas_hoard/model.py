@@ -46,7 +46,9 @@ N_PICKUP_DEADLINE = "pickup_deadline"
 N_PROBLEM = "problem"
 N_ETA = "eta_change"
 N_STALE = "stale"
-NOTIFY_TYPES = (N_NEW, N_STATUS, N_OUT, N_DELIVERED, N_PICKUP, N_PICKUP_DEADLINE, N_PROBLEM, N_ETA, N_STALE)
+from .travel.model import TRAVEL_NOTIFY_TYPES  # noqa: E402
+
+NOTIFY_TYPES = (N_NEW, N_STATUS, N_OUT, N_DELIVERED, N_PICKUP, N_PICKUP_DEADLINE, N_PROBLEM, N_ETA, N_STALE, *TRAVEL_NOTIFY_TYPES)
 
 
 def label(status: str, lang: str = "es") -> str:
