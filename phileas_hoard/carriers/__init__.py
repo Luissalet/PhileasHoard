@@ -18,6 +18,7 @@ from typing import Any, Callable, Optional
 import httpx
 
 from . import correos, dhl, ups
+from ..hoard_link.web.fetch import DEFAULT_USER_AGENT
 from .base import TrackResult, fail
 from .browser import BrowserRung
 from .track17 import Track17
@@ -38,9 +39,8 @@ class Carriers:
         self._ups_key = ("", "")
 
     def _client(self) -> httpx.Client:
-        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Safari/537.36 PhileasHoard"
         return httpx.Client(transport=self.transport, timeout=getattr(self.config, "http_timeout_s", 25.0), follow_redirects=True,
-                            headers={"User-Agent": ua, "Accept-Language": "es-ES,es;q=0.9,en;q=0.6"})
+                            headers={"User-Agent": DEFAULT_USER_AGENT, "Accept-Language": "es-ES,es;q=0.9,en;q=0.6"})
 
     # ------------------------------------------------------------------ plans
     def plan(self, carrier: str) -> list[str]:

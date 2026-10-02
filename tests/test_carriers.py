@@ -142,3 +142,36 @@ def test_ups_web_real_answer_after_pickup():
     assert r.service == "UPS Standard®"
     assert len(r.events) == 1 and r.events[0].description == "Escaneo de recogida" and r.events[0].location == "Dewsbury, United Kingdom"
     assert ups.country_of("Köln, Alemania") == "DE" and ups.country_of("Venlo, NL") == "NL"
+
+
+def test_browser_wrapper_uses_the_shared_rung_off_screen(tmp_path, monkeypatch):
+    from phileas_hoard.carriers import browser as wrapper
+
+    calls = []
+
+    class SharedRung:
+        channel_used = "msedge"
+
+        def __init__(self, profile, **kw):
+            calls.append(("init", str(profile), kw))
+
+        def available(self):
+            return True
+
+        def capture_json(self, url, match, **kw):
+            calls.append(("capture", url, match, kw))
+            return {"ok": 1}, ""
+
+        def close(self):
+            calls.append(("close",))
+
+    monkeypatch.setattr(wrapper, "_SharedRung", SharedRung)
+    rung = wrapper.BrowserRung(make_config(tmp_path, browser=True))
+    assert rung.available() == (True, "") and rung.channel == "msedge"
+    assert rung.capture_json("https://x.example/t", "track", timeout_s=5) == ({"ok": 1}, "")
+    assert calls[0][2] == {"headless": False, "locale": "es-ES", "playwright_factory": None}
+    assert calls[1][3] == {"timeout_s": 5, "offscreen": True}
+    rung.close()
+    off = wrapper.BrowserRung(make_config(tmp_path, browser=False))
+    assert off.available()[0] is False and off.capture_json("https://x.example", "t")[0] is None
+    assert wrapper.BrowserRung(make_config(tmp_path, browser=True, offline=True)).available() == (False, "offline")
