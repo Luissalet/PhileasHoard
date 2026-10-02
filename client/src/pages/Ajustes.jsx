@@ -191,6 +191,36 @@ function ChannelCard({ channel, info, secrets, settings, onChanged }) {
   );
 }
 
+// Who delivers the push channels: the family hub (it decides channels, quiet hours and sphere) or the channels below.
+function NotifyVia({ via, settings, onChanged }) {
+  const { t, notify } = useApp();
+  const [busy, run] = useBusy();
+  const [result, setResult] = useState(null);
+  const mode = settings["notify.via"] || "auto";
+  const change = (value) => run("via", async () => {
+    await api.call("settings_set", { values: { "notify.via": value } });
+    notify(t("saved"));
+    await onChanged();
+  });
+  const test = () => run("test", async () => setResult(await api.call("notify_test", { via: "hub" })));
+  return (
+    <div className="panel space-y-3" aria-label={t("notify_via")}>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="block">
+          <span className="label">{t("notify_via")}</span>
+          <select className="field" style={{ width: "auto" }} value={mode} disabled={busy.via} onChange={(e) => change(e.target.value)}>
+            {["auto", "hub", "own"].map((m) => <option key={m} value={m}>{t(`notify_via_${m}`)}</option>)}
+          </select>
+        </label>
+        {via?.effective && <Chip className={via.effective === "hub" ? "chip-accent" : ""}>{t("notify_via_now")}: {t(`notify_via_${via.effective}_now`)}</Chip>}
+        <Busy className="btn btn-sm" busy={busy.test} onClick={test}>{t("notify_via_test")}</Busy>
+        {result && <span className={`chip ${result.ok ? "chip-ok" : "chip-danger"}`} role="status" style={{ whiteSpace: "normal" }}>{result.ok ? t("test_ok") : `${t("test_failed")}: ${result.error || ""}`}</span>}
+      </div>
+      <p className="help">{t("notify_via_hint")}</p>
+    </div>
+  );
+}
+
 function CarriersTable() {
   const { t, carriers, loadCarriers } = useApp();
   useEffect(() => { loadCarriers(); }, [loadCarriers]);
@@ -294,8 +324,11 @@ export default function Ajustes() {
       <Section id="sec-mail" title={t("set_mail")}>
         <div className="panel space-y-3">
           <p className="help">{t("set_mail_help")}</p>
+          {data.mail?.source?.effective && <p><Chip className={data.mail.source.effective === "hub" ? "chip-accent" : ""}>{t("mail_source_now")}: {data.mail.source.effective === "hub" ? "Hub" : "Faustus"}</Chip></p>}
           <SettingsForm settings={settings} onSaved={reload} fields={[
             { key: "mail.enabled", type: "switch", label: t("mail_enabled"), hint: t("mail_enabled_hint"), wide: true },
+            { key: "mail.source", type: "select", label: t("mail_source"), hint: t("mail_source_hint"), wide: true,
+              options: ["auto", "hub", "faustus"].map((m) => [m, t(`mail_source_${m}`)]) },
             { key: "mail.faustus_dir", type: "text", label: t("faustus_folder"), hint: t("faustus_folder_hint"), wide: true },
             { key: "mail.faustus_owner", type: "text", label: t("faustus_owner"), hint: t("faustus_owner_hint") },
             { key: "mail.interval_min", type: "number", label: t("mail_interval"), hint: t("minutes") },
@@ -356,6 +389,7 @@ export default function Ajustes() {
       <Section id="sec-notify" title={t("set_notify")}>
         <p className="help">{t("set_notify_help")}</p>
         <ErrorBox error={notifyStatus.error} />
+        <NotifyVia via={notifyStatus.data?.via} settings={settings} onChanged={reload} />
         <div className="grid gap-3 xl:grid-cols-2">
           {CHANNELS.map((c) => <ChannelCard key={c} channel={c} info={channels[c]} secrets={secrets} settings={settings} onChanged={reload} />)}
         </div>

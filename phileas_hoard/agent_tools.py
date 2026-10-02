@@ -176,8 +176,10 @@ class SecretArgs(BaseModel):
     value: str = Field("", max_length=2000, description="Empty clears it.")
 
 
-class ChannelArgs(BaseModel):
-    channel: Literal[CHANNELS]  # type: ignore[valid-type]
+class NotifyTestArgs(BaseModel):
+    channel: Literal[CHANNELS] = "hub"  # type: ignore[valid-type]
+    via: Literal["own", "hub"] = Field("own", description="hub = a sample notification through the family hub's notification centre "
+                                                         "(it decides the channels); own = test the channel itself.")
 
 
 class LimitArgs(BaseModel):
@@ -336,10 +338,13 @@ def run_notifications(svc: Services, a: LimitArgs) -> dict[str, Any]:
 
 
 def run_notify_status(svc: Services, _: Empty) -> dict[str, Any]:
-    return {"channels": svc.notifier.channels_status()}
+    via = svc.notifier.via_status() if hasattr(svc.notifier, "via_status") else {}
+    return {"channels": svc.notifier.channels_status(), "via": via}
 
 
-def run_notify_test(svc: Services, a: ChannelArgs) -> dict[str, Any]:
+def run_notify_test(svc: Services, a: NotifyTestArgs) -> dict[str, Any]:
+    if a.via == "hub":
+        return svc.notifier.test_hub()
     return svc.notifier.test(a.channel)
 
 
@@ -420,11 +425,11 @@ TOOLS: list[Tool] = [
     Tool("carriers_list", "Known carriers and which source answers for each. Transportistas y fuentes.", Empty, _ann(True), run_carriers),
     Tool("notifications_list", "Notifications sent (newest first). Avisos enviados.", LimitArgs, _ann(True), run_notifications),
     Tool("notify_status", "Notification channels: toast, hub, ntfy, Telegram, email. Canales de aviso.", Empty, _ann(True), run_notify_status),
-    Tool("notify_test", "Send a test notification through one channel. Probar un canal de aviso.",
-         ChannelArgs, _ann(False, idempotent=False, open_world=True), run_notify_test),
+    Tool("notify_test", "Send a test notification through one channel or the family hub. Probar un canal de aviso.",
+         NotifyTestArgs, _ann(False, idempotent=False, open_world=True), run_notify_test),
     Tool("telegram_find_chat_id", "Find and save the Telegram chat id after writing to the bot. Buscar chat de Telegram.",
          Empty, _ann(False, idempotent=True, open_world=True), run_telegram),
-    Tool("settings_set", "Change settings (mail interval, region for holidays, channels…). Cambiar ajustes.",
+    Tool("settings_set", "Change settings (mail source, alert delivery, mail interval, holidays region, channels…). Cambiar ajustes.",
          SettingsArgs, _ann(False, idempotent=True), run_settings_set),
     Tool("secret_set", "Store a key (17TRACK, UPS, DHL, Telegram, ntfy, SMTP). Guardar una clave.",
          SecretArgs, _ann(False, idempotent=True), run_secret_set),

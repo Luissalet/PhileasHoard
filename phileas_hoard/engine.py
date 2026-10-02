@@ -86,13 +86,14 @@ class Engine:
         limit = limit or (800 if first else 150)
         t0 = time.monotonic()
         answer = self.mail.scan(since_days=days, limit=limit, skip=self.store.known_message_ids(), query=query,
-                                 travel=bool(self.travel is not None and self.travel.cfg().enabled))
+                                 travel=bool(self.travel is not None and self.travel.cfg().enabled), deep=bool(since_days or query))
         if not answer.get("ok"):
             self.store.add_run("mail", "", False, int((time.monotonic() - t0) * 1000), str(answer.get("error") or "mail failed"))
             self.set("mail.last_error", str(answer.get("error") or "mail failed")[:300])
             return {"ok": False, "error": answer.get("error") or "mail failed", "accounts": answer.get("accounts") or []}
         messages = answer.get("messages") or []
         summary = self.ingest(messages, bootstrap=first)
+        self._after_hub_read(messages)
         if first:
             self.finish_bootstrap()
             self.set("mail.first_scan_done", "1")
@@ -103,6 +104,34 @@ class Engine:
             detail += f", {summary['travel']} travel"
         self.store.add_run("mail", "", True, int((time.monotonic() - t0) * 1000), detail)
         return {"ok": True, "accounts": answer.get("accounts") or [], "messages": len(messages), "error": answer.get("error") or "", **summary}
+
+    def _after_hub_read(self, messages: list[dict[str, Any]]) -> None:
+        """Mail that came from the family hub: remember how far it was read and tell the hub which mails became a parcel or a trip.
+        Never raises: the claims are hints and the database is the truth."""
+        commit = getattr(self.mail, "commit", None)
+        claim = getattr(self.mail, "claim", None)
+        try:
+            if callable(commit):
+                commit()
+            if not callable(claim):
+                return
+            for message in messages:
+                hub_id = message.get("hub_id")
+                if hub_id in (None, ""):
+                    continue
+                row = self.store.mail(str(message.get("message_id") or ""))
+                if not row:
+                    continue
+                if row.get("shipment_id"):
+                    claim(hub_id, "shipment", f"hoard://phileas/shipment/{row['shipment_id']}")
+                elif row.get("kind") == "travel" and self.travel is not None:
+                    segs = self.travel.t.segments_of_mail(row["message_id"])
+                    if not segs:
+                        continue
+                    trip_id = self.travel.t.segment(segs[0]).get("trip_id")
+                    claim(hub_id, "trip", f"hoard://phileas/trip/{trip_id}" if trip_id else f"hoard://phileas/segment/{segs[0]}")
+        except Exception:  # noqa: BLE001
+            log.exception("hub mail claims failed")
 
     def ingest(self, messages: list[dict[str, Any]], *, bootstrap: bool = False, force: bool = False) -> dict[str, Any]:
         """Analyze and file messages, oldest first so statuses build up in order."""
@@ -259,10 +288,13 @@ class Engine:
         if updates:
             shipment = self.store.update_shipment(sid, **updates)
         quiet = bootstrap or (self.clock() - ts) > QUIET_AGE_S or shipment.get("history_only")
+        if created and not bootstrap and not shipment.get("history_only"):
+            self._emit_shipment("phileas.shipment.new", self.store.shipment(sid), message_id=str(message.get("message_id") or ""))
         if facts.status:
             self.store.add_event(sid, ts=ts, status=facts.status, description=str(message.get("subject") or "")[:300],
                                  location="", source="mail", key=f"mail|{message.get('message_id')}")
-            self.apply_status(sid, facts.status, ts, source="mail", text=str(message.get("subject") or ""), quiet=quiet)
+            self.apply_status(sid, facts.status, ts, source="mail", text=str(message.get("subject") or ""), quiet=quiet,
+                              events=not bootstrap, message_id=str(message.get("message_id") or ""))
         if created and not quiet:
             s = self.store.shipment(sid)
             self.notify(s, N_NEW, "low", self._t("new_title", s), self._t("new_body", s), dedupe=f"{sid}|new")
@@ -384,7 +416,10 @@ class Engine:
             self._settle(s)
 
     # ================================================================== status
-    def apply_status(self, sid: str, status: str, ts: float, *, source: str, text: str = "", quiet: bool = False) -> bool:
+    def apply_status(self, sid: str, status: str, ts: float, *, source: str, text: str = "", quiet: bool = False, events: bool = True,
+                     message_id: str = "") -> bool:
+        """``quiet`` silences the notifications; ``events`` (default on) lets the family bus hear about a real change. Neither a parcel that
+        belongs to the history nor the first status a new parcel gets is an event."""
         s = self.store.shipment(sid)
         current = s.get("status") or UNKNOWN
         cur_ts = s.get("status_ts") or 0
@@ -421,9 +456,28 @@ class Engine:
         self.store.update_shipment(sid, **updates)
         if status != current and not quiet:
             self._notify_status(self.store.shipment(sid), current, status)
-        if status != current:
+        if status != current and events and not s.get("history_only") and current != UNKNOWN:
             self.emit("phileas.status", {"shipment_id": sid, "from": current, "to": status, "label": s.get("label"), "source": source})
+        if status == DELIVERED and current != DELIVERED and events and not s.get("history_only"):
+            self._emit_shipment("phileas.shipment.delivered", self.store.shipment(sid), message_id=message_id, delivered_at=ts)
         return status != current
+
+    def _emit_shipment(self, type_: str, s: dict[str, Any], *, message_id: str = "", delivered_at: Optional[float] = None) -> None:
+        """``phileas.shipment.new`` / ``phileas.shipment.delivered`` for the family bus: ids, the shop, the order, the carrier and the
+        item names, never the mail. The hub's purchases facet and the other Hoards listen to these."""
+        if not message_id:
+            row = next(iter(self.store.mails(shipment_id=s["id"], limit=1)), None)
+            message_id = str((row or {}).get("message_id") or "")
+        payload: dict[str, Any] = {"shipment_id": s["id"], "merchant": s.get("merchant") or "", "order_ref": s.get("order_ref") or "",
+                                   "message_id": message_id, "items": [s["item"]] if s.get("item") else [], "carrier": s.get("carrier") or "",
+                                   "tracking_number": s.get("tracking_number") or ""}
+        if type_.endswith(".delivered"):
+            when = delivered_at or s.get("delivered_ts") or self.clock()
+            payload["delivered_at"] = datetime.fromtimestamp(float(when)).isoformat(timespec="seconds")
+        try:
+            self.emit(type_, payload)
+        except Exception:  # noqa: BLE001 - events are hints
+            log.exception("emit %s failed", type_)
 
     def _notify_status(self, s: dict[str, Any], old: str, new: str) -> None:
         sid = s["id"]
@@ -606,7 +660,7 @@ class Engine:
         url = s.get("tracking_url") or s.get("merchant_url") or ""
         event = {"id": f"{s['id']}:{type_}", "type": type_, "severity": severity, "title": title, "summary": body, "url": url,
                  "shipment_id": s["id"], "status": s.get("status"), "eta_likely": s.get("eta_likely"), "label": s.get("label"),
-                 "carrier": s.get("carrier"), "tracking_number": s.get("tracking_number")}
+                 "carrier": s.get("carrier"), "tracking_number": s.get("tracking_number"), "dedupe_key": f"phileas:{dedupe}"}
         channels = ["toast", "hub", "ntfy", "telegram", "email"]
         try:
             results = self.notifier.send(event, channels)

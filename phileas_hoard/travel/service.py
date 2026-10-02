@@ -450,7 +450,7 @@ class Travel(Ops):
             link = next((x["url"] for x in seg.get("links") or []), "")
         event = {"id": f"{trip.get('id') or ''}:{type_}", "type": type_, "severity": notices.SEVERITY.get(type_, "medium"), "title": title, "summary": body,
                  "url": link, "trip_id": trip.get("id"), "segment_id": (seg or {}).get("id"), "trip_title": trip.get("title"),
-                 "start_date": trip.get("start_date"), "end_date": trip.get("end_date")}
+                 "start_date": trip.get("start_date"), "end_date": trip.get("end_date"), "dedupe_key": f"phileas:{dedupe}"}
         try:
             results = self.notifier.send(event, ["toast", "hub", "ntfy", "telegram", "email"])
         except Exception as exc:  # noqa: BLE001

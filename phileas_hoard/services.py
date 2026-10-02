@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets as _secrets
+import threading
 import time
 from datetime import date, timedelta
 from typing import Any, Callable, Optional
@@ -19,10 +20,10 @@ from .config import Config
 from .db import Database
 from .engine import Engine
 from .errors import PhileasError
-from .mail.source import FaustusMail
+from .mail.source import SOURCE_MODES, FaustusMail, MailSource
 from .model import (ACTIVE, AVAILABLE_FOR_PICKUP, DELIVERED, EXCEPTION, FAILED_ATTEMPT, FINAL, OUT_FOR_DELIVERY, RETURNED, STATUSES,
                     UNKNOWN, label as status_label, progress)
-from .notify import CHANNELS, EMAIL_BACKENDS, Notifier
+from .notify import CHANNELS, EMAIL_BACKENDS, VIA_MODES, Notifier
 from .scheduler import Scheduler
 from .store import Store
 from .travel import airports as travel_airports
@@ -40,6 +41,7 @@ UI_SETTINGS: dict[str, Optional[tuple[str, ...]]] = {
     "ui.language": ("es", "en"),
     "scheduler.paused": ("0", "1"),
     "mail.enabled": ("1", "0"),
+    "mail.source": SOURCE_MODES,
     "mail.interval_min": None,
     "mail.window_days": None,
     "mail.first_days": None,
@@ -53,6 +55,7 @@ UI_SETTINGS: dict[str, Optional[tuple[str, ...]]] = {
     "checks.night_from": None,
     "checks.night_to": None,
     "notify.ntfy.server": None,
+    "notify.via": VIA_MODES,
     "notify.email.backend": EMAIL_BACKENDS,
     "travel.enabled": ("1", "0"),
     "travel.home_city": None,
@@ -71,7 +74,7 @@ UI_SETTINGS: dict[str, Optional[tuple[str, ...]]] = {
     **{f"notify.{c}.min_severity": ("low", "medium", "high") for c in CHANNELS},
 }
 GATE_VERSION = "2"          # bump to run the review-list clean-up again after the travel gate changes
-DEFAULTS = {"ui.language": "es", "scheduler.paused": "0", "mail.enabled": "1", "mail.interval_min": "10", "mail.window_days": "14",
+DEFAULTS = {"ui.language": "es", "scheduler.paused": "0", "mail.enabled": "1", "mail.source": "auto", "notify.via": "auto", "mail.interval_min": "10", "mail.window_days": "14",
             "mail.first_days": "120", "mail.history_days": "30", "carriers.web_pages": "1", "eta.region": "ES-MD", "archive.after_days": "5",
             "checks.night_from": "23", "checks.night_to": "7", "notify.ntfy.server": "https://ntfy.sh", "notify.email.backend": "auto", **TRAVEL_DEFAULTS}
 NUMERIC = {"travel.gap_days": (0, 14), "travel.departure_hours": (1, 24), "travel.tomorrow_hour": (0, 23), "travel.docs_days": (1, 365), "mail.interval_min": (2, 1440), "mail.window_days": (1, 365), "mail.first_days": (1, 730), "mail.history_days": (1, 3650), "archive.after_days": (0, 365),
@@ -118,7 +121,8 @@ class Services:
         self.store = Store(self.db, clock_fn)
         self._load_secrets()
         self.notifier = notifier or Notifier(config, self.db.get_setting, clock=clock_fn)
-        self.mail = mail_source or FaustusMail(self.setting, config.secret, runner=mail_runner, clock=clock_fn)
+        self.mail = mail_source or MailSource(FaustusMail(self.setting, config.secret, runner=mail_runner, clock=clock_fn), self.db.get_setting,
+                                              self.db.set_setting, clock=clock_fn)
         self.carriers = Carriers(config, config.secret, transport=http_transport, browser=browser, setting=self.setting)
         self.tstore = TravelStore(self.db, clock_fn)
         self.travel = Travel(self.store, self.tstore, self.notifier, setting=self.setting, set_setting=self.db.set_setting, emit=self._emit, clock=clock_fn,
@@ -153,11 +157,27 @@ class Services:
     def start(self) -> None:
         if self.config.scheduler:
             self.scheduler.start()
+            if not self.config.offline:
+                self._refresh_mail_interest()
 
     def stop(self) -> None:
         self.scheduler.stop()
         self.carriers.close()
         self.db.close()
+
+    def _refresh_mail_interest(self) -> None:
+        """Tell the hub which mail Phileas wants (in the background: the hub may be slow or away; the next scan registers again)."""
+        mail = self.mail
+        if not hasattr(mail, "ensure_interest"):
+            return
+
+        def run() -> None:
+            try:
+                if mail.source_setting() != "faustus" and mail.hub_up():
+                    mail.ensure_interest(self.travel.cfg().enabled, force=True)
+            except Exception:  # noqa: BLE001 - a hint to the hub
+                pass
+        threading.Thread(target=run, name="phileas-mail-interest", daemon=True).start()
 
     def _hub_call(self, app: str, tool: str, arguments: Optional[dict[str, Any]] = None, **kw: Any) -> dict[str, Any]:
         """Calls to the other Hoards through the hub; offline mode never leaves the process."""
@@ -228,6 +248,10 @@ class Services:
                     except ValueError as exc:
                         raise PhileasError("invalid", f"Holiday {chunk.strip()!r} is not YYYY-MM-DD.") from exc
             self.db.set_setting(key, value)
+        if any(k in values for k in ("mail.source", "travel.enabled")) and hasattr(self.mail, "forget_interest"):
+            self.mail.forget_interest()
+            if not self.config.offline and self.config.scheduler:
+                self._refresh_mail_interest()
         return self.settings()
 
     def _load_secrets(self) -> None:
@@ -368,10 +392,12 @@ class Services:
     def status(self) -> dict[str, Any]:
         return {"service": SERVICE, "version": __version__, "data_dir": str(self.config.data_dir), "uptime_s": int(time.time() - self.started_at),
                 "counts": self.counts(), "travel": self.tstore.counts(), "scheduler": self.scheduler.status(), "channels": self.notifier.channels_status(),
+                "notify_via": self.notifier.via_status() if hasattr(self.notifier, "via_status") else {},
                 "sources": self.carriers.sources(), "mail": {"faustus_dir": str(self.mail.faustus_dir() or ""),
                                                               "last_scan_ts": float(self.setting("mail.last_scan_ts") or 0) or None,
                                                               "last_error": self.setting("mail.last_error"),
-                                                              "first_scan_done": self.setting("mail.first_scan_done") == "1"},
+                                                              "first_scan_done": self.setting("mail.first_scan_done") == "1",
+                                                              "source": self.mail.source_status() if hasattr(self.mail, "source_status") else {}},
                 "offline": self.config.offline, "recent_runs": self.store.runs(limit=12)}
 
     # ------------------------------------------------------------------ manual shipments

@@ -11,7 +11,7 @@ mail (Faustus account) ──► mail/faustus_mail.py (runs under Faustus's Pyth
  (ups, correos,     │   linking · status rules · check pacing · housekeeping
   dhl, track17,     │
   browser)          ├──► eta.py + bizdays.py (explained estimate, delivery days, holidays)
-                    └──► notify/ (toast, family bus, ntfy, Telegram, email via Faustus)
+                    └──► notify/ (toast, family bus, ntfy, Telegram, email via Faustus; or one hub notification, `notify.via`)
 
 scheduler.py: lane "checks" (carrier checks of due shipments) · lane "mail" (mail scan every N min, housekeeping hourly) · lane "travel" (reminders and document checks, 60 s tick)
 services.py: wiring + dashboard/detail/stats views · agent_tools.py: one tool catalogue for the UI, the REST bridge and MCP
@@ -20,6 +20,13 @@ services.py: wiring + dashboard/detail/stats views · agent_tools.py: one tool c
 ## Mail
 
 `faustus_mail.py` is stdlib-only and imports nothing from Phileas: Phileas starts it with Faustus's Python inside the Faustus folder, writes one JSON request to stdin and reads one JSON line. It loads Faustus's `mcp_servers/email_server.py` to resolve accounts and connect, so passwords stay in Faustus. On Gmail it searches `[Gmail]/All Mail` with a `X-GM-RAW` query (shipping words, `newer_than:Nd`); elsewhere `SINCE` + `SUBJECT` terms. Already-read Message-IDs are skipped. Each message comes back as subject, sender, date, plain text (the HTML part converted, invisible pre-header padding removed) and its links, plus `from_self` when you sent it.
+
+## Family hub
+
+* `mail/source.py` `MailSource` sits between the engine and the readers: with `mail.source` = `auto` | `hub` it reads the hub's mail gateway (`fam_mail`) from the stored position `mail.hub.since_id` (interest: `interest_spec()`), returns records shaped like the Faustus helper's, and the engine moves the position (`commit`) and claims the filed mails (`claim`) only after they are stored. A deep scan goes to the Faustus reader in `auto`.
+* `notify/__init__.py`: with `notify.via` = `auto` | `hub` the push channels become one `fam_notify.notify` call; the `hub` channel (the bus event `phileas.update` / `phileas.trip.update`) is unchanged.
+* `agenda.py` answers `GET /api/family/agenda` (deliveries, pickup deadlines, trips, departures).
+* `engine._emit_shipment` and `apply_status` emit `phileas.shipment.new`, `phileas.shipment.delivered` and `phileas.status` (live parcels only).
 
 ## Classification and extraction (`mail/parse.py`)
 

@@ -43,6 +43,9 @@ def main() -> int:
               "- `GET /api/stats` — delivery days per carrier and shop, and how accurate their dates were.",
               "- `GET /api/trips/ics` — calendar file (`text/calendar`) with every upcoming and ongoing trip; `?trip=<id or title>` for one.",
               "- `GET /api/trips/{id}/ics` — calendar file of one trip: a VEVENT per segment, times in UTC, an alarm when check-in opens.",
+              "- `GET /api/family/agenda?from=&to=&sphere=` — the family agenda contract (Bearer token of this app): expected deliveries "
+              "(`delivery`), pickup deadlines (`deadline`), trips and the departures of their flights, trains, buses and ferries (`other`). "
+              "Nothing that is over is listed; a late parcel stays on its expected day.",
               "- `POST /api/ui/call` `{name, arguments}` — any tool above, uncapped.", "",
               "## Events on the family bus", "",
               "Emitted through Hoard Link (`family.emit`); the payload carries ids and short titles only.", "",
@@ -51,7 +54,10 @@ def main() -> int:
               "| `phileas.trip.changed` | a trip's segments or dates change (a booking changed, cancelled, merged, split or moved) | `trip_id`, `title`, `start_date`, `end_date` |",
               "| `phileas.checkin.open` | a flight's online check-in opens | `trip_id`, `segment_id`, `number`, `from`, `to`, `dep_local` |",
               "| `phileas.trip.update` | every notification about a trip, through the hub channel | `event_id`, `type`, `severity`, `title`, `summary`, `trip_id`, `segment_id`, `trip_title`, `start_date`, `end_date`, `url` |",
-              "| `phileas.update` | every notification about a parcel, through the hub channel (unchanged) | `event_id`, `type`, `severity`, `title`, `summary`, `shipment_id`, … |", ""]
+              "| `phileas.update` | every notification about a parcel, through the hub channel (unchanged) | `event_id`, `type`, `severity`, `title`, `summary`, `shipment_id`, … |",
+              "| `phileas.shipment.new` | a parcel is created from a live mail (never for the first import or old mail) | `shipment_id`, `merchant`, `order_ref`, `message_id`, `items`, `carrier`, `tracking_number` |",
+              "| `phileas.shipment.delivered` | a parcel becomes delivered (carrier, mail or by hand; never for history) | the same, plus `delivered_at` (local ISO time) |",
+              "| `phileas.status` | a parcel's status really changes (not for its first status, not for history, not when the same status arrives again) | `shipment_id`, `from`, `to`, `label`, `source` |", ""]
     (ROOT / "docs" / "API.md").write_text("\n".join(lines), encoding="utf-8")
     print(f"{len(TOOLS)} tools")
     return 0
