@@ -202,3 +202,80 @@ def test_an_activity_has_its_own_label_and_timeline_role(tv):
     assert seg["label"] == "Visita guiada"
     day = next(d for d in tv.trip_detail(seg["trip_id"])["timeline"] if d["date"] == "2026-11-13")
     assert [(i["role"], i["time"]) for i in day["items"]] == [("event", "17:00")]
+
+
+# ---------------------------------------------------------------- a segment joins a trip only when it is connected to it
+def test_a_flight_from_somewhere_else_starts_its_own_trip(tv):
+    flight(tv, "VY8421", "BCN", "PMI", "2026-12-03T07:15", "2026-12-03T08:20")
+    other = flight(tv, "V74521", "SVQ", "BIO", "2026-12-03T18:20", "2026-12-03T19:35")
+    flight(tv, "VY8422", "PMI", "BCN", "2026-12-06T21:10", "2026-12-06T22:15")
+    got = sorted(titles(tv))
+    assert got == [("Bilbao · 3 dic 2026", 1), ("Palma · 3–6 dic 2026", 2)]
+    assert tv.t.segment(other["id"])["trip_id"] != tv.t.segment(next(s["id"] for s in tv.t.segments() if s["number"] == "VY8422"))["trip_id"]
+
+
+def test_connecting_flights_through_a_hub_stay_together(tv):
+    flight(tv, "IB3280", "MAD", "FRA", "2026-11-12T07:00", "2026-11-12T09:25")
+    flight(tv, "LH1166", "FRA", "LIS", "2026-11-12T11:10", "2026-11-12T13:20")
+    flight(tv, "TP1111", "LIS", "MAD", "2026-11-15T20:30", "2026-11-15T23:15")
+    assert titles(tv) == [("Lisboa · 12–15 nov 2026", 3)]
+
+
+def test_a_stranger_leg_the_same_day_is_not_pulled_into_the_trip(tv):
+    flight(tv, "IB3166", "MAD", "LIS", "2026-11-12T09:05", "2026-11-12T09:55")
+    flight(tv, "IB1000", "SVQ", "BIO", "2026-11-12T10:00", "2026-11-12T11:10")
+    stay(tv, "Hotel Alfama", "2026-11-12T15:00", "2026-11-14T11:00", address="Rua das Escolas 12, Lisboa")
+    got = sorted(titles(tv))
+    assert got == [("Bilbao · 12 nov 2026", 1), ("Lisboa · 12–14 nov 2026", 2)]
+
+
+def test_a_stay_in_another_city_during_the_trip_is_its_own_trip(tv):
+    flight(tv, "IB3166", "MAD", "LIS", "2026-11-12T09:05", "2026-11-12T09:55")
+    stay(tv, "Hotel Alfama", "2026-11-12T15:00", "2026-11-15T11:00", address="Rua das Escolas 12, Lisboa")
+    stay(tv, "Hotel Gran Via", "2026-11-13T15:00", "2026-11-14T11:00", address="Gran Via 5, Bilbao")
+    flight(tv, "IB3167", "LIS", "MAD", "2026-11-15T20:30", "2026-11-15T23:15")
+    assert sorted(titles(tv)) == [("Bilbao · 13–14 nov 2026", 1), ("Lisboa · 12–15 nov 2026", 3)]
+
+
+def test_open_jaw_through_another_airport_of_the_home_area_still_groups(tv):
+    # home is Madrid: back through Torrejon, then another trip the next day leaves from Barajas
+    flight(tv, "IB3166", "MAD", "LIS", "2026-11-12T09:05", "2026-11-12T09:55")
+    flight(tv, "IB3167", "LIS", "TOJ", "2026-11-15T20:30", "2026-11-15T23:15")
+    flight(tv, "IB0500", "MAD", "OPO", "2026-11-16T07:00", "2026-11-16T07:55")
+    assert sorted(titles(tv)) == [("Lisboa · 12–15 nov 2026", 2), ("Oporto · 16 nov 2026", 1)]
+
+
+def test_open_jaw_for_a_home_city_with_a_second_airport(config, clock, fake_mail):
+    s = build(config, clock, fake_mail, hub_call=FakeHub())
+    s.set_settings({"travel.home_city": "Barcelona", "travel.home_airports": "BCN"})
+    clock.t = airports.to_ts("2026-10-01T12:00", "Europe/Madrid")
+    tv = s.travel
+    try:
+        flight(tv, "VY1001", "BCN", "LIS", "2026-11-12T09:05", "2026-11-12T09:55")
+        flight(tv, "VY1002", "LIS", "GRO", "2026-11-18T20:30", "2026-11-18T23:15")     # a long stay, back through Girona
+        flight(tv, "VY2001", "BCN", "CDG", "2026-11-19T07:00", "2026-11-19T09:00")
+        assert sorted(titles(tv)) == [("Lisboa · 12–18 nov 2026", 2), ("Paris · 19 nov 2026", 1)]
+    finally:
+        s.stop()
+
+
+def test_different_airports_of_one_city_on_the_way_out_and_back(tv):
+    flight(tv, "IB3166", "MAD", "LGW", "2026-11-12T09:05", "2026-11-12T11:00")
+    flight(tv, "BA0457", "LHR", "MAD", "2026-11-18T20:30", "2026-11-18T23:15")
+    assert titles(tv) == [("Londres · 12–18 nov 2026", 2)]
+
+
+def test_the_same_booking_reference_always_joins(tv):
+    flight(tv, "IB3166", "MAD", "LIS", "2026-11-12T09:05", "2026-11-12T09:55", booking_ref="XK7Q2M")
+    flight(tv, "IB8001", "SVQ", "BIO", "2026-11-12T18:00", "2026-11-12T19:10", booking_ref="XK7Q2M")
+    assert [n for _t, n in titles(tv)] == [2]
+
+
+def test_a_segment_the_user_moved_by_hand_stays_where_it_was_put(tv):
+    a = flight(tv, "VY8421", "BCN", "PMI", "2026-12-03T07:15", "2026-12-03T08:20")
+    other = flight(tv, "V74521", "SVQ", "BIO", "2026-12-03T18:20", "2026-12-03T19:35")
+    assert len(titles(tv)) == 2
+    tv.move_segment(other["id"], a["trip_id"])
+    tv.regroup()
+    assert titles(tv) == [("Palma · 3 dic 2026", 2)] or [n for _t, n in titles(tv)] == [2]
+    assert tv.t.segment(other["id"])["trip_id"] == a["trip_id"]

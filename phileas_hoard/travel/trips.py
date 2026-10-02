@@ -28,10 +28,16 @@ class Home:
     airports: frozenset = frozenset()
     tz: str = "Europe/Madrid"
 
+    def _metros(self) -> frozenset:
+        keys = {airports.metro_of(c) for c in self.airports} | {airports.metro_of_city(self.city)}
+        return frozenset(k for k in keys if k)
+
     def is_home(self, seg: dict[str, Any], side: str) -> bool:
         code = (seg.get(f"{side}_code") or "").upper()
         city = fold(seg.get(f"{side}_city") or "")
         if code and code in self.airports:
+            return True
+        if code and airports.metro_of(code) in self._metros():       # another airport of the home area (MAD / TOJ, BCN / GRO)
             return True
         return bool(self.city and city and fold(self.city) == city)
 
@@ -78,9 +84,17 @@ def destination_of(segs: list[dict[str, Any]], home: Home) -> tuple[str, str]:
     if away:
         city = max(away, key=lambda c: (away[c], -list(away).index(c)))
         return city, country.get(city, "")
-    for s in sorted(segs, key=lambda x: x.get("dep_ts") or 0):
-        if s.get("kind") in TRANSPORT and s.get("to_city") and not home.is_home(s, "to"):
-            return s["to_city"], s.get("to_country") or ""
+    legs = sorted((s for s in segs if s.get("kind") in TRANSPORT and s.get("to_city")), key=lambda x: x.get("dep_ts") or 0)
+    best, best_dwell = None, -1
+    for i, s in enumerate(legs):
+        if home.is_home(s, "to"):
+            continue
+        nxt = legs[i + 1] if i + 1 < len(legs) else None
+        dwell = max(0, (nxt.get("dep_ts") or 0) - (s.get("arr_ts") or s.get("dep_ts") or 0)) if nxt else 0
+        if dwell >= best_dwell:           # where the traveller stays longest; a connection at a hub is only passed through
+            best, best_dwell = s, dwell
+    if best:
+        return best["to_city"], best.get("to_country") or ""
     for s in segs:
         city = s.get("to_city") or s.get("from_city")
         if city:
@@ -114,6 +128,30 @@ def trip_status(trip: dict[str, Any], segs: list[dict[str, Any]], today: date) -
 
 
 # ------------------------------------------------------------------ grouping
+def _keys(seg: dict[str, Any], side: str, home: Home) -> set[str]:
+    """What identifies the place at one end of a segment: its city, airport, airport area, station name, and "home"."""
+    keys: set[str] = set()
+    city = fold(seg.get(f"{side}_city") or "")
+    code = (seg.get(f"{side}_code") or "").upper()
+    name = fold(seg.get(f"{side}_name") or "")
+    if city:
+        keys.add("c:" + city)
+    if code:
+        keys.add("a:" + code)
+        if airports.metro_of(code):
+            keys.add("m:" + airports.metro_of(code))
+    if name and not city:
+        keys.add("n:" + name)
+    if home.is_home(seg, side):
+        keys.add("home")
+    return keys
+
+
+def shares_booking(cluster_segs: list[dict[str, Any]], s: dict[str, Any]) -> bool:
+    ref = (s.get("booking_ref") or "").strip().upper()
+    return bool(ref) and any((x.get("booking_ref") or "").strip().upper() == ref for x in cluster_segs)
+
+
 @dataclass
 class _Cluster:
     segs: list[dict[str, Any]] = field(default_factory=list)
@@ -170,26 +208,77 @@ class _Cluster:
         first_city = self._first_city()
         return bool(first_city) and fold(s.get("to_city") or s.get("to_name") or "") == first_city
 
+    def connects(self, s: dict[str, Any], home: Home, loose: bool = True) -> bool:
+        """Is ``s`` geographically part of this trip? A transport segment starts where the traveller is (the last place reached, or a stay
+        that covers that day) or arrives at a place the trip stays in; a stay, car or activity is in a place the trip visits. A segment
+        whose place is not known cannot be told apart, so dates alone decide (nothing is invented)."""
+        transport = self._transport()
+        stays = [x for x in self.segs if x.get("kind") not in TRANSPORT and x.get("status") != CANCELLED]
+        if s.get("kind") in TRANSPORT:
+            origin = _keys(s, "from", home)
+            if not origin:
+                return True
+            where: set[str] = set()
+            if transport:
+                where |= _keys(transport[-1], "to", home)
+            day = s.get("start_date") or ""
+            for x in stays:
+                if (x.get("start_date") or "") <= day <= (x.get("end_date") or x.get("start_date") or ""):
+                    where |= _keys(x, "from", home)
+            if not transport and not where:
+                for x in stays:
+                    where |= _keys(x, "from", home)
+            if not where:
+                return True
+            if origin & where:
+                return True
+            stay_places: set[str] = set()
+            for x in stays:
+                if x.get("kind") == LODGING:
+                    stay_places |= _keys(x, "from", home)
+            return bool(stay_places & _keys(s, "to", home))
+        place = _keys(s, "from", home)
+        if not place:
+            return True
+        visited: set[str] = set()
+        for x in transport:
+            visited |= _keys(x, "from", home) | _keys(x, "to", home)
+        for x in stays:
+            visited |= _keys(x, "from", home)
+        if not visited or place & visited:
+            return True
+        # a stay that begins after everything so far has ended continues the trip (the move between the two places was not booked by mail)
+        if not loose or not stays:
+            return False
+        start, end = _d(s.get("start_date") or ""), self.end()
+        return bool(start and end and start >= end)
 
-def _fits(cluster: _Cluster, s: dict[str, Any], gap: int, home: Home) -> bool:
+
+def _fits(cluster: _Cluster, s: dict[str, Any], gap: int, home: Home, loose: bool = True) -> bool:
     end = cluster.end()
     start = _d(s.get("start_date") or "")
     if end is None or start is None:
         return False
-    if (start - end).days > gap:
+    days = (start - end).days
+    if days <= OPEN_RETURN_DAYS and shares_booking(cluster.segs, s):
+        return True                       # the same booking (outbound and return, or a stay on the same reservation)
+    if days > gap:
         # a long stay: the way back, even after a quiet spell, belongs to the trip that left
-        return (start - end).days <= OPEN_RETURN_DAYS and cluster.away(home) and cluster.returns(s, home)
+        return days <= OPEN_RETURN_DAYS and cluster.away(home) and cluster.returns(s, home)
     if cluster.closed(home):
         # back where the trip began: whatever starts afterwards is another trip (a stay that began before the return still belongs here)
-        return start < end and s.get("kind") in (LODGING, "car")
-    return True
+        return start < end and s.get("kind") in (LODGING, "car") and cluster.connects(s, home, loose)
+    return cluster.connects(s, home, loose)
 
 
 def cluster_segments(free: list[dict[str, Any]], gap: int, home: Home) -> list[_Cluster]:
+    """Overlapping trips are allowed: a segment joins the most recent cluster it is connected to, else starts its own."""
     clusters: list[_Cluster] = []
     for s in sorted(free, key=lambda x: (x.get("start_date") or "9999", x.get("dep_ts") or 0, x.get("created_ts") or 0)):
-        if clusters and _fits(clusters[-1], s, gap, home):
-            clusters[-1].segs.append(s)
+        # a trip that really visits the place wins over one the stay merely follows in time
+        target = next((c for c in reversed(clusters) if _fits(c, s, gap, home, False)), None) or next((c for c in reversed(clusters) if _fits(c, s, gap, home)), None)
+        if target is not None:
+            target.segs.append(s)
         else:
             clusters.append(_Cluster([s]))
     return clusters
@@ -222,8 +311,10 @@ def regroup(store: TravelStore, *, home: Home, gap_days: int = 2, lang: str = "e
         for tid, (a, b) in anchor_span.items():
             da, db = _d(a), _d(b)
             if start and da and db and da - timedelta(days=gap_days) <= start <= db + timedelta(days=gap_days):
-                target = tid
-                break
+                members = anchored[tid]
+                if s.get("trip_id") == tid or shares_booking(members, s) or _Cluster(list(members)).connects(s, home):
+                    target = tid
+                    break
         if target:
             assigned[s["id"]] = target
         else:

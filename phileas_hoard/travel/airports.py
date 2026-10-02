@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, Optional
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .airlines import fold
+
 DATA = Path(__file__).with_name("tables") / "airports.json"
 
 # Schengen area (ISO country codes): Vueling's online check-in closes later outside it.
@@ -27,6 +29,32 @@ CITY_ES = {
     "Belgrade": "Belgrado", "Tangier": "Tánger", "Algiers": "Argel", "Tunis": "Túnez", "Alexandria": "Alejandría",
     "Basel": "Basilea", "Bern": "Berna",
 }
+
+
+# Airports that serve one metropolitan area (or a city and its overflow airport): arriving at one and leaving from another is still
+# "the same place" when trips are grouped. Keyed by the first code of each group.
+METRO_GROUPS = [
+    "MAD TOJ", "BCN GRO REU", "LHR LGW STN LTN LCY SEN", "CDG ORY BVA", "MXP LIN BGY", "FCO CIA", "JFK LGA EWR", "BER SXF TXL",
+    "ARN BMA NYO", "SVO DME VKO", "HND NRT", "ORD MDW", "IAD DCA BWI", "BRU CRL", "OSL TRF", "LAX BUR SNA", "SFO OAK SJC", "YYZ YTZ",
+]
+METRO: dict[str, str] = {code: group.split()[0] for group in METRO_GROUPS for code in group.split()}
+
+
+def metro_of(code: str) -> str:
+    """The metropolitan-area key of an airport code ("" when it is not in a group)."""
+    return METRO.get((code or "").strip().upper(), "")
+
+
+def metro_of_city(city: str) -> str:
+    """The metro key of a city name, when one of its airports is in a group ("Madrid" -> "MAD")."""
+    want = fold(city or "")
+    if not want:
+        return ""
+    for code, key in METRO.items():
+        row = table().get(code)
+        if row and fold(row[1]) == want:
+            return key
+    return ""
 
 
 @lru_cache(maxsize=1)
