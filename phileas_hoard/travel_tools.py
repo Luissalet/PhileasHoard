@@ -327,6 +327,10 @@ def run_read_again(svc: Services, a: MailIdArg) -> dict[str, Any]:
     return cap_result(_tv(svc).read_again(a.message_id))
 
 
+def run_recheck(svc: Services, a: BaseModel) -> dict[str, Any]:
+    return cap_result(_tv(svc).recheck_review())
+
+
 SIN = "Sinónimos:"
 TRAVEL_TOOLS: list[Tool] = [
     Tool("travel_overview", "Trips on now, next trip, check-ins to do, mails to review. Mis viajes de un vistazo.\n"
@@ -388,4 +392,7 @@ TRAVEL_TOOLS: list[Tool] = [
          " correos de reservas pendientes, qué reservas ha leído.", TravelMailListArgs, _ann(True), run_mail_list),
     Tool("travel_mail_read_again", "Ask the local model to read a travel mail from the review list again. Releer reserva con el modelo.",
          MailIdArg, _ann(False, idempotent=True), run_read_again),
+    Tool("travel_mail_recheck", "Drop non-bookings from the travel review list. Limpiar la lista de revisión de viajes.\n"
+         "Runs the booking-evidence check again over the mails waiting for review and moves marketing, notices and event tickets out of the list. "
+         + SIN + " limpiar correos de viajes, quitar publicidad de la lista de reservas.", Empty, _ann(False, idempotent=True), run_recheck),
 ]

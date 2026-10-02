@@ -12,14 +12,23 @@ from datetime import date, datetime
 from typing import Any, Optional
 
 from . import extract, rules
-from .scan import find_dates, find_times
+from .scan import clean_lines, find_dates, find_times, tokenize
 from .draft import SegmentDraft
 from .model import CANCELLED, CONFIRMED
 
 BOOKING_CUE = re.compile(r"reserva|booking|billete|ticket|confirmaci[oó]n|confirmation|confirmed|confirmad|itinerar|localizador|check-?in|boarding|e-?ticket|"
                          r"tarjeta de embarque|cancelaci[oó]n|cancell?ed|cancelad|cambio de (?:horario|vuelo)|schedule change|your (?:trip|flight|stay)|tu (?:viaje|vuelo|estancia)", re.I)
-PROMO_CUE = re.compile(r"oferta|descuento|chollo|newsletter|boletín|suscr[ií]b|promo|rebajas|black friday|ahorra|desde \d+\s*(?:€|euros?)|"
-                       r"\bsale\b|deals?\b|encuesta|valora tu|opini[oó]n|survey|rate your|puntos|millas|miles|loyalty|club\b", re.I)
+PROMO_CUE = re.compile(r"oferta|descuento|chollo|newsletter|bolet[ií]n|suscr[ií]b|promo|rebajas|black friday|ahorra|desde \d+\s*(?:€|euros?)|"
+                       r"\bsale\b|deals?\b|encuesta|valora tu|opini[oó]n|survey|rate your|puntos|millas|miles|loyalty|club\b|"
+                       r"premio|[uú]ltima oportunidad|finaliza hoy|no te lo pierdas|no esperes|reembolso|ventajas|desbloqueado|"
+                       r"preferencias de comunicaci[oó]n|communication preferences|tell us|cu[eé]ntanos|d[eé]janos tu|hace tiempo desde|"
+                       r"vive m[aá]s|d[eé]jate llevar|vuela a\b|escapad|genius|recompensa|sorteo|gana\b|cup[oó]n|voucher", re.I)
+# a notice for every passenger of an airline, not about one booking
+NOTICE_CUE = re.compile(r"para todos los (?:pasajeros|viajeros|clientes)|todos los pasajeros|all passengers|important (?:update|notice|information)|"
+                        r"actualizaci[oó]n importante|aviso importante|informaci[oó]n importante", re.I)
+# tickets for a show, a film or a match: travel only when they come with a place away from home (schema.org) or the user adds them to a trip
+EVENT_CUE = re.compile(r"\b(?:entradas?|cines?|cinesa|yelmo|sesi[oó]n|butacas?|concierto|teatro|espect[aá]culo|festival|partido|ticketmaster|eventbrite|"
+                       r"productos de bar|tickets? (?:for|to) (?:the )?(?:show|concert|match|film|movie))\b", re.I)
 FLIGHT_NO = re.compile(r"\b[A-Z0-9]{2}\s?\d{2,4}\b")
 
 
@@ -53,6 +62,13 @@ class TravelFacts:
         out = cls(**{k: v for k, v in data.items() if k in ("score", "candidate", "source", "sender", "change", "ref", "kinds", "reasons")})
         out.drafts = [SegmentDraft.from_dict(d) for d in data.get("drafts") or []]
         return out
+
+
+def itinerary(r: rules.RulesResult, subject: str, text: str, ref: date) -> bool:
+    """Something concrete to travel: a leg the rules read, a dated departure or check-in with a time, or a route between two places."""
+    if r.drafts or _has_date_and_time(text, ref):
+        return True
+    return any(tok["t"] in ("route", "place") for tok in tokenize(clean_lines(subject + "\n" + text), ref, places=True))
 
 
 def _ref_date(message: dict[str, Any]) -> date:
@@ -97,11 +113,28 @@ def analyze_travel(message: dict[str, Any], *, default_tz: str = "Europe/Madrid"
     elif r.kinds and _has_date_and_time(text, ref):
         score += 25                                             # travel words with a date and a time, but no route the rules could read
         facts.reasons.append("travel words, date and time")
-    if PROMO_CUE.search(subject) and not r.ref and not schema:
+    promo = bool(PROMO_CUE.search(subject) or PROMO_CUE.search("\n".join(rules.clean_lines(text)[:6])))
+    if promo and not r.ref and not schema:
         score -= 50
         facts.reasons.append("looks promotional")
     facts.score = max(0, min(score, 100))
-    facts.candidate = facts.score >= 60
+    # Only real booking evidence makes a mail travel: reservation markup, or a booking reference together with something concrete to
+    # travel. A sender, booking words or promotions never decide on their own, so marketing from travel companies stays noise.
+    if schema:
+        facts.candidate = True
+    elif r.ref and (itinerary(r, subject, text, ref) or r.change in ("cancel", "change")):
+        facts.candidate = True
+        facts.reasons.append("reference and itinerary")
+    elif sender and r.drafts and not promo and BOOKING_CUE.search(head):
+        facts.candidate = True                                  # a travel company's mail whose legs were read with dates and times
+        facts.reasons.append("sender and dated legs")
+    else:
+        facts.candidate = False
+        facts.reasons.append("no booking evidence")
+    if facts.candidate and not schema and not sender and not (set(r.kinds) & {"flight", "train", "bus", "ferry", "car"}):
+        if EVENT_CUE.search(head + "\n" + "\n".join(rules.clean_lines(text)[:25])):
+            facts.candidate = False
+            facts.reasons.append("event ticket without a trip")
 
     if schema:
         for d in schema:

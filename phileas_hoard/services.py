@@ -69,6 +69,7 @@ UI_SETTINGS: dict[str, Optional[tuple[str, ...]]] = {
     **{f"notify.{c}.enabled": ("1", "0") for c in CHANNELS},
     **{f"notify.{c}.min_severity": ("low", "medium", "high") for c in CHANNELS},
 }
+GATE_VERSION = "2"          # bump to run the review-list clean-up again after the travel gate changes
 DEFAULTS = {"ui.language": "es", "scheduler.paused": "0", "mail.enabled": "1", "mail.interval_min": "10", "mail.window_days": "14",
             "mail.first_days": "120", "carriers.web_pages": "1", "eta.region": "ES-MD", "archive.after_days": "5",
             "checks.night_from": "23", "checks.night_to": "7", "notify.ntfy.server": "https://ntfy.sh", "notify.email.backend": "auto", **TRAVEL_DEFAULTS}
@@ -127,6 +128,17 @@ class Services:
                                    paused=lambda: self.setting("scheduler.paused") == "1",
                                    mail_interval_min=lambda: float(self.setting("mail.interval_min") or 10),
                                    mail_enabled=lambda: self.setting("mail.enabled") == "1" and not config.offline, travel_tick=self.travel.tick)
+
+        self._housekeeping()
+
+    def _housekeeping(self) -> None:
+        """One-off clean-ups that run once per database (a flag in the settings says which already ran)."""
+        try:
+            if self.db.get_setting("travel.review_gate", "") != GATE_VERSION and self.travel.cfg().enabled:
+                self.travel.recheck_review()
+                self.db.set_setting("travel.review_gate", GATE_VERSION)
+        except Exception:  # noqa: BLE001
+            log.exception("travel review clean-up failed")
 
     # ------------------------------------------------------------------ lifecycle
     def start(self) -> None:

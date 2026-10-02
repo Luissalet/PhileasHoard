@@ -653,6 +653,14 @@ Annotations: idempotentHint.
 |---|---|---|
 | `message_id` (string) | yes |  |
 
+## `travel_mail_recheck`
+
+Drop non-bookings from the travel review list. Limpiar la lista de revisión de viajes.
+
+Runs the booking-evidence check again over the mails waiting for review and moves marketing, notices and event tickets out of the list. Sinónimos: limpiar correos de viajes, quitar publicidad de la lista de reservas.
+
+Annotations: idempotentHint.
+
 ## REST routes for the UI
 
 - `GET /api/health`, `GET /api/status`

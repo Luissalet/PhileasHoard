@@ -20,7 +20,7 @@ from . import airports, checkin, hubcalls, ics, llm, notices, segments as seglib
 from .airlines import fold
 from .analyze import TravelFacts, analyze_travel
 from .draft import SegmentDraft
-from .model import (CANCELLED, CONFIRMED, FLIGHT, KINDS, LODGING, N_CHECKIN_CLOSING, N_CHECKIN_OPEN, N_DEPARTURE, N_DOC_PROBLEM, N_LODGING_DAY,
+from .model import (CANCELLED, CONFIRMED, EVENT, FLIGHT, KINDS, LODGING, N_CHECKIN_CLOSING, N_CHECKIN_OPEN, N_DEPARTURE, N_DOC_PROBLEM, N_LODGING_DAY,
                     N_SEGMENT_CANCELLED, N_SEGMENT_CHANGED, N_TRIP_NEW, N_TRIP_TOMORROW, ONGOING, PAST, TRANSPORT, UPCOMING)
 from .ops import Ops
 from .store import TravelStore
@@ -140,6 +140,11 @@ class Travel(Ops):
             claim = False                                       # the parcel rules read it as shipping and nothing says travel company
         if not claim:
             return None
+        if not force_travel and facts.drafts and facts.source == "schema":
+            kept = [d for d in facts.drafts if not self._event_not_travel(d, cfg)]
+            if not kept:
+                return None                                     # tickets for something in the home city are not travel
+            facts.drafts = kept
         ts = float(message.get("ts") or self.now())
         quiet = bootstrap or (self.now() - ts) > QUIET_AGE_S
         drafts = [d for d in facts.drafts if d.kind in cfg.kinds or force_travel]
@@ -168,6 +173,16 @@ class Travel(Ops):
             data["model"] = summary.get("model")
         return {"kind": "travel", "state": state, "score": facts.score, "facts": data, "summary": summary}
 
+    @staticmethod
+    def _event_not_travel(d: SegmentDraft, cfg: Config) -> bool:
+        """An event is travel only with a date and a venue or city away from home; one in the home city, or with no place at all, is left out."""
+        if d.kind != EVENT:
+            return False
+        place = fold(" ".join((d.from_city, d.from_name, d.address)))
+        if not place.strip() or not d.dep_local:
+            return True
+        return bool(cfg.home.city and fold(cfg.home.city) in place)
+
     def _model_pass(self, message: dict[str, Any], cfg: Config) -> dict[str, Any]:
         if not cfg.model:
             return {"status": "off", "drafts": [], "model": "", "error": ""}
@@ -175,6 +190,28 @@ class Travel(Ops):
             return {"status": "deferred", "drafts": [], "model": "", "error": "too many mails in one scan; open the review list to read it again"}
         self._model_calls += 1
         return llm.read_with_model(message, self.chat)
+
+    def recheck_review(self) -> dict[str, Any]:
+        """Run the booking-evidence gate again over the travel mails waiting for review and drop the ones that were never bookings
+        (marketing, notices, event tickets). A mail with something read from it, a pasted one and one the user already handled stay."""
+        cfg = self.cfg()
+        dropped, kept = [], 0
+        for row in self.store.mails(kind=["travel"], state=["new"], limit=2000):
+            mid = row["message_id"]
+            facts = row.get("facts") or {}
+            if mid.startswith("<pasted-") or facts.get("drafts"):
+                kept += 1
+                continue
+            message = {"message_id": mid, "ts": row.get("ts"), "subject": row.get("subject") or "", "from_address": row.get("from_address") or "",
+                       "from_name": row.get("from_name") or "", "text": facts.get("text") or row.get("snippet") or ""}
+            again = analyze_travel(message, default_tz=cfg.home.tz)
+            if again.candidate:
+                kept += 1
+                continue
+            data = {**{k: v for k, v in facts.items() if k != "text"}, "reasons": again.reasons, "rechecked": True}
+            self.store.save_mail({**message, "account": row.get("account") or ""}, kind="noise", score=again.score, facts=data, shipment_id=None, state="skipped")
+            dropped.append(mid)
+        return {"dropped": len(dropped), "kept": kept, "message_ids": dropped[:50]}
 
     def read_again(self, message_id: str) -> dict[str, Any]:
         """Ask the model pass again for a mail waiting in the review list."""

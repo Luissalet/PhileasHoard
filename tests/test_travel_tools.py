@@ -12,7 +12,7 @@ from phileas_hoard.travel import airports
 
 TRAVEL = ["travel_overview", "trips_list", "trip_get", "trip_create", "trip_update", "segment_add", "segment_update", "segment_delete",
           "checkin_status", "checkin_done", "trip_documents_check", "trip_people", "trip_expenses", "trip_expense_add", "trip_expense_update",
-          "trip_expense_delete", "trip_settle", "trip_to_ledger", "trip_ics", "trip_paste", "travel_mail_list", "travel_mail_read_again"]
+          "trip_expense_delete", "trip_settle", "trip_to_ledger", "trip_ics", "trip_paste", "travel_mail_list", "travel_mail_read_again", "travel_mail_recheck"]
 READ_ONLY = {"travel_overview", "trips_list", "trip_get", "checkin_status", "trip_documents_check", "trip_expenses", "trip_settle", "travel_mail_list"}
 
 
