@@ -88,5 +88,5 @@ class FaustusMail:
         self._status = (self.clock(), key, answer)
         return answer
 
-    def scan(self, *, since_days: int, limit: int, skip: list[str], query: str = "") -> dict[str, Any]:
-        return self.call({"action": "scan", "since_days": since_days, "max": limit, "skip": skip, "query": query})
+    def scan(self, *, since_days: int, limit: int, skip: list[str], query: str = "", travel: bool = False) -> dict[str, Any]:
+        return self.call({"action": "scan", "since_days": since_days, "max": limit, "skip": skip, "query": query, "travel": travel})

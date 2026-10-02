@@ -5,7 +5,8 @@ Faustus: Phileas only receives the messages that look like shipping mail. It rea
 
     {"action": "status"}                                       -> which account would be read, nothing is fetched
     {"action": "scan", "since_days": 30, "max": 60,
-     "skip": ["<message-id>", ...], "query": "optional"}       -> candidate messages, newest first
+     "skip": ["<message-id>", ...], "query": "optional",
+     "travel": true}                                           -> candidate messages, newest first (``travel`` adds booking mail)
     {"action": "read", "message_id": "<...>"}                  -> one message (any folder searched)
     {"action": "send", "subject": "...", "text": "...", "html": "...", "to": [...]}  -> a notification mail
 
@@ -33,6 +34,7 @@ from email.utils import formataddr, formatdate, make_msgid
 from datetime import datetime, timedelta, timezone
 
 MAX_TEXT = 24_000
+MAX_HTML = 240_000     # raw HTML is returned only for mail that carries schema.org reservation markup
 MAX_LINKS = 60
 
 # Words that shipping mail carries in its subject (ES, EN, FR, DE, IT, PT, NL). Matched by IMAP SUBJECT search.
@@ -42,6 +44,15 @@ SUBJECT_TERMS = [
     "expédié", "livraison", "colis", "versandt", "sendung", "lieferung", "spedito", "spedizione", "consegna",
     "enviada", "encomenda", "verzonden", "bezorging",
 ]
+# Words that booking mail carries in its subject (ES, EN, FR, DE, IT, PT). Added when the request says ``travel``.
+TRAVEL_TERMS = [
+    "reserva", "reservation", "booking", "billete", "ticket", "vuelo", "flight", "tarjeta de embarque", "boarding pass", "check-in",
+    "itinerario", "itinerary", "localizador", "confirmación", "confirmation", "e-ticket", "viaje", "tren", "autobús", "ferry",
+    "hotel", "alojamiento", "alquiler de coche", "car rental", "cancelación", "cancelled", "billet", "réservation", "buchung", "prenotazione",
+    "voo", "bilhete",
+]
+TRAVEL_GMAIL = ("OR reserva OR reservation OR booking OR billete OR itinerary OR itinerario OR localizador OR \"tarjeta de embarque\" "
+                "OR \"boarding pass\" OR vuelo OR flight OR hotel OR e-ticket")
 GMAIL_QUERY = ("(seguimiento OR enviado OR envío OR \"en camino\" OR reparto OR entrega OR paquete OR tracking OR shipped "
                "OR shipment OR dispatched OR \"out for delivery\" OR delivered OR expédié OR versandt OR spedito "
                "OR 1Z OR \"número de seguimiento\" OR \"tracking number\")")
@@ -157,7 +168,7 @@ def message_to_record(msg, server=None) -> dict:
         except Exception:  # noqa: BLE001
             return str(value)
 
-    plain, html_text, links = "", "", []
+    plain, html_text, links, raw_html = "", "", [], ""
     for part in (msg.walk() if msg.is_multipart() else [msg]):
         if part.is_multipart() or "attachment" in str(part.get("Content-Disposition", "")).lower():
             continue
@@ -165,7 +176,8 @@ def message_to_record(msg, server=None) -> dict:
         if ctype == "text/plain" and not plain:
             plain = _Text.tidy(_decode(part))
         elif ctype == "text/html" and not html_text:
-            html_text, links = _Text.from_html(_decode(part))
+            raw_html = _decode(part)
+            html_text, links = _Text.from_html(raw_html)
     text = html_text if len(html_text) > len(plain) * 0.6 or not plain else plain
     if plain and html_text and plain not in text:
         text = text  # keep the richer one; links already come from the HTML part
@@ -187,9 +199,12 @@ def message_to_record(msg, server=None) -> dict:
         ts = when.timestamp()
     except (TypeError, ValueError, IndexError):
         ts = None
-    return {"message_id": (msg.get("Message-ID", "") or "").strip()[:300], "subject": header("Subject")[:300],
-            "from_name": name[:120], "from_address": address[:200], "date": date_raw[:80], "ts": ts,
-            "text": text[:MAX_TEXT], "links": unique[:MAX_LINKS]}
+    record = {"message_id": (msg.get("Message-ID", "") or "").strip()[:300], "subject": header("Subject")[:300],
+              "from_name": name[:120], "from_address": address[:200], "date": date_raw[:80], "ts": ts,
+              "text": text[:MAX_TEXT], "links": unique[:MAX_LINKS]}
+    if raw_html and "schema.org" in raw_html and re.search(r"Reservation|ld\+json", raw_html):
+        record["html"] = raw_html[:MAX_HTML]        # reservation markup (JSON-LD or microdata) is read by the travel facet
+    return record
 
 
 # ------------------------------------------------------------------ IMAP search
@@ -208,10 +223,10 @@ def _imap_since(days: int) -> str:
     return when.strftime("%d-%b-%Y")
 
 
-def _search(conn, host: str, since_days: int, query: str) -> list[bytes]:
+def _search(conn, host: str, since_days: int, query: str, travel: bool = False) -> list[bytes]:
     since = _imap_since(since_days)
     if "gmail" in host or "googlemail" in host:
-        raw = query or GMAIL_QUERY
+        raw = query or (GMAIL_QUERY[:-1] + " " + TRAVEL_GMAIL + ")" if travel else GMAIL_QUERY)
         raw = f"{raw} newer_than:{max(1, int(since_days))}d"
         found = _uids(conn, ["X-GM-RAW", '"' + raw.replace("\\", "").replace('"', '\\"') + '"'])
         if found:
@@ -220,7 +235,7 @@ def _search(conn, host: str, since_days: int, query: str) -> list[bytes]:
         q = query.replace("\\", "").replace('"', "")
         return _uids(conn, ["SINCE", since, "TEXT", f'"{q}"'])
     seen: dict[bytes, None] = {}
-    for term in SUBJECT_TERMS:
+    for term in SUBJECT_TERMS + (TRAVEL_TERMS if travel else []):
         for uid in _uids(conn, ["SINCE", since, "SUBJECT", f'"{term}"']):
             seen[uid] = None
     return list(seen)
@@ -260,6 +275,7 @@ def scan(server, request: dict) -> dict:
     limit = max(1, min(int(request.get("max") or 60), 1000))
     skip = set(str(s) for s in (request.get("skip") or []))
     query = str(request.get("query") or "").strip()[:200]
+    travel = bool(request.get("travel"))
     out, errors, scanned_accounts = [], [], []
     for row in _accounts(server, request.get("account")):
         selector = _selector(row)
@@ -268,7 +284,7 @@ def scan(server, request: dict) -> dict:
         try:
             conn = server._imap_connect(selector)
             folder = _select_first(conn, server, _folders_for(conn, host))
-            uids = _uids_newest(_search(conn, host, since_days, query))
+            uids = _uids_newest(_search(conn, host, since_days, query, travel))
             scanned_accounts.append({"account": row.get("account_name") or _mask(row.get("imap_user") or ""),
                                      "folder": folder, "matches": len(uids)})
             for uid in uids:

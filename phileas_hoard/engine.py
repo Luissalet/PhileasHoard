@@ -85,7 +85,8 @@ class Engine:
         days = since_days or int(self.setting("mail.first_days", "120") if first else self.setting("mail.window_days", "14"))
         limit = limit or (800 if first else 150)
         t0 = time.monotonic()
-        answer = self.mail.scan(since_days=days, limit=limit, skip=self.store.known_message_ids(), query=query)
+        answer = self.mail.scan(since_days=days, limit=limit, skip=self.store.known_message_ids(), query=query,
+                                 travel=bool(self.travel is not None and self.travel.cfg().enabled))
         if not answer.get("ok"):
             self.store.add_run("mail", "", False, int((time.monotonic() - t0) * 1000), str(answer.get("error") or "mail failed"))
             self.set("mail.last_error", str(answer.get("error") or "mail failed")[:300])
