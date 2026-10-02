@@ -13,7 +13,7 @@ mail (Faustus account) ──► mail/faustus_mail.py (runs under Faustus's Pyth
   browser)          ├──► eta.py + bizdays.py (explained estimate, delivery days, holidays)
                     └──► notify/ (toast, family bus, ntfy, Telegram, email via Faustus)
 
-scheduler.py: lane "checks" (carrier checks of due shipments) · lane "mail" (mail scan every N min, housekeeping hourly)
+scheduler.py: lane "checks" (carrier checks of due shipments) · lane "mail" (mail scan every N min, housekeeping hourly) · lane "travel" (reminders and document checks, 60 s tick)
 services.py: wiring + dashboard/detail/stats views · agent_tools.py: one tool catalogue for the UI, the REST bridge and MCP
 ```
 
@@ -52,3 +52,29 @@ Candidates, each a window with a weight: carrier date (shifted by the carrier's 
 ## Checks and housekeeping
 
 Next check by status (30 min out for delivery, 1 h incidents or arriving within a day, 2 h in transit, 3 h label or customs, 6 h pickup, 2 h then 6 h not found), at least 1 h for the browser rung, backoff after failures, nothing between 23:00 and 07:00. Hourly housekeeping archives deliveries after five days, assumes delivery of mail-only parcels the day after "out for delivery", gives up numbers the carrier never knew after 14 days, flags parcels with no news for four delivery days and reminds pickup deadlines.
+
+## Travel (`phileas_hoard/travel/`)
+
+```
+mail ──► engine.ingest ──► parcel rules (mail/parse.py) ──► shipments
+              │
+              └─► travel/service.process_mail ──► analyze.py (score: schema 80, known sender 45, booking words 25, reference 15, drafts 20; candidate ≥ 60)
+                                                     │
+        extract.py (schema.org JSON-LD / microdata) ─┤
+        rules.py + scan.py (sender rules, reading-order tokens, leg state machine) ─┤
+        llm.py (local model through Hoard Link, JSON schema; evidence quoted from the mail is checked) ─┘
+                                                     ▼  SegmentDraft (draft.py: airports, time zones, canonical city names)
+        service._file ──► segments.py (match by booking reference + leg, change/cancel/stale, merge fields) ──► store.py (SQLite)
+                              └─► trips.regroup (deterministic grouping; locked segments are anchors; trip ids are reused by vote)
+```
+
+Tables (migration 2): `trips`, `segments`, `segment_mails`, `trip_people`, `trip_expenses`, plus `notifications.trip_id`. Times are stored as local wall-clock time plus an IANA zone and the derived UTC instants (`dep_ts`, `arr_ts`); duration, check-in windows and the calendar file are computed from the instants, so daylight-saving changes come out right.
+
+- **Reading order.** The mail helper returns HTML only for mail that carries schema.org reservation markup. Schema markup is read first; sender rules second; the model only for mail already scored as a booking that neither could read, at most 6 per batch. A model result is flagged `source: model`, keeps the quoted lines (an invented segment whose quote is not in the mail is dropped) and goes to the review list. `no_model` is reported, never replaced by a guess.
+- **Trips (`trips.py`).** Segments are clustered by start date with a gap in days; a cluster that has come back where it began is closed; a long stay's way back joins the trip that left (up to 45 days); cancelled legs still count for where a trip began and ended. Home (city, airports) decides when the cluster touches it; otherwise the cluster's own first place does. Segments you place or edit are locked and anchor their trip.
+- **Check-in (`checkin.py`).** A table of airline windows with source and date checked; states `not_open`, `open`, `closed`, `done`, `unknown_open`.
+- **Reminders (`service.tick`).** Trip tomorrow, check-in opens, check-in closes in 3 h and not done, stay day, departure in N hours, changes, cancellations and document problems go through the notifier with a once-only key per event. During the night silence they wait in a persistent queue and go out in the morning, unless they are urgent.
+- **Other Hoards (`hubcalls.py`).** Kafka (`docs_list`, `deadlines_list`) and Ledger (`list_accounts`, `list_categories`, `add_entry`) are called through `family.call`; hub down, app down, missing tool and not authorised are distinct, non-fatal answers.
+- **Expenses (`expenses.py`).** Integer cents, largest-remainder apportioning, base currency plus a typed rate per expense; the minimum number of transfers is exact (subsets that balance among themselves, up to 16 people) and greedy beyond.
+- **Calendar (`ics.py`).** RFC 5545 with UTC times, all-day stays, line folding and an absolute alarm at check-in opening.
+- **Airports (`airports.py`).** `tables/airports.json` from `scripts/gen_airports.py` (airportsdata, MIT).

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "phileas-hoard"
-version = "0.1.0"
+version = "0.2.0"
 description = "A local shipment tracker: reads shipping mail, follows each parcel with its carrier and estimates the arrival day, with a dashboard, notifications and MCP tools."
 readme = "README.md"
 requires-python = ">=3.11"
