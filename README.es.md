@@ -61,6 +61,10 @@ En Ajustes → Viajes: activar la lectura (`travel.enabled`), ciudad, aeropuerto
 
 `phileas_hoard/travel/tables/airports.json` lo genera `scripts/gen_airports.py` a partir del paquete `airportsdata` (licencia MIT; deriva de la lista pública de aeropuertos de mwgg, copyright 2014 mwgg, MIT). Solo se guardan código IATA, nombre, ciudad, país y zona horaria; el paquete no hace falta al ejecutar.
 
+## Código compartido
+
+Todo lo que no es de envíos ni de viajes viene de la biblioteca vendorizada de la familia (`phileas_hoard/hoard_link/`, los mismos archivos en todas las apps): la carcasa de la app (formato de errores, PWA, interfaz compilada, sonda de salud, arranque con `python -m`, guarda de peticiones, archivos de configuración y token), el kit de herramientas y el puente MCP (`mcp_server.py` son diez líneas), el envoltorio de SQLite, los carriles de segundo plano, los ids ULID, los formatos y dígitos de control de los números de seguimiento, los calendarios de días de entrega, la lectura de precios y el reparto de gastos, el generador de iCalendar, el paso del navegador sin ventana, la lectura de JSON-LD, los canales y el enrutador de avisos y el ayudante de correo de Faustus (el antiguo `mail/faustus_mail.py` ya no existe). Lo que queda en Phileas es el conocimiento de envíos y viajes. Cambios que puedes notar: los registros nuevos usan ids ULID con prefijo (los ids cortos antiguos siguen funcionando), un host permitido escrito con puerto queda fijado a ese puerto, los errores de la API son siempre JSON con un `code`, los festivos en domingo pasan al lunes en el calendario de días de entrega y Valencia sigue la tabla de festivos compartida, los archivos de calendario terminan las estancias en el día final exclusivo y las páginas de los transportistas se abren con el identificador de navegador común de la familia.
+
 ## Límites
 
 - El correo se lee de las cuentas configuradas en Faustus; otras bandejas, pegando el correo.

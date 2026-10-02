@@ -1,7 +1,7 @@
 # Architecture
 
 ```
-mail (Faustus account) ──► mail/faustus_mail.py (runs under Faustus's Python, IMAP search, HTML → text + links)
+mail (Faustus account) ──► hoard_link/mail_helper.py (the shared helper, runs under Faustus's Python, IMAP search, HTML → text + links)
                               │ JSON lines
                               ▼
                        mail/parse.py  ── numbers.py (formats, check digits, carrier links, redirects)
@@ -13,18 +13,18 @@ mail (Faustus account) ──► mail/faustus_mail.py (runs under Faustus's Pyth
   browser)          ├──► eta.py + bizdays.py (explained estimate, delivery days, holidays)
                     └──► notify/ (toast, family bus, ntfy, Telegram, email via Faustus; or one hub notification, `notify.via`)
 
-scheduler.py: lane "checks" (carrier checks of due shipments) · lane "mail" (mail scan every N min, housekeeping hourly) · lane "travel" (reminders and document checks, 60 s tick)
+scheduler.py: a facade over the commons' `LaneScheduler`: lane "checks" (carrier checks of due shipments, found by a tick job that reads the store) · lane "mail" (periodic mail scan every N min, housekeeping hourly) · lane "travel" (periodic reminders and document checks, 60 s)
 services.py: wiring + dashboard/detail/stats views · agent_tools.py: one tool catalogue for the UI, the REST bridge and MCP
 ```
 
 ## Mail
 
-`faustus_mail.py` is stdlib-only and imports nothing from Phileas: Phileas starts it with Faustus's Python inside the Faustus folder, writes one JSON request to stdin and reads one JSON line. It loads Faustus's `mcp_servers/email_server.py` to resolve accounts and connect, so passwords stay in Faustus. On Gmail it searches `[Gmail]/All Mail` with a `X-GM-RAW` query (shipping words, `newer_than:Nd`); elsewhere `SINCE` + `SUBJECT` terms. Already-read Message-IDs are skipped. Each message comes back as subject, sender, date, plain text (the HTML part converted, invisible pre-header padding removed) and its links, plus `from_self` when you sent it.
+The reader is the family's shared mail helper (`phileas_hoard/hoard_link/mail_helper.py`, stdlib-only): `mail/source.py` starts it with Faustus's Python inside the Faustus folder through the commons' `MailRouter`, writes one JSON request to stdin and reads one JSON line. It loads Faustus's `mcp_servers/email_server.py` to resolve accounts and connect, so passwords stay in Faustus; it opens folders read-only and fetches with `BODY.PEEK`. On Gmail it searches `[Gmail]/All Mail` with a `X-GM-RAW` query (shipping words, plus travel words when the travel facet is on, `newer_than:Nd`); elsewhere `SINCE` + `SUBJECT` terms. Already-read Message-IDs are skipped. Each message comes back as subject, sender, date, plain text (the HTML part converted, invisible pre-header padding removed) and its links, plus `from_self` when you sent it, and the HTML only for mail that carries schema.org reservation markup. What Phileas adds on top of the shared helper is the interest it registers (`interest_spec()`) and the position bookkeeping in `MailSource`.
 
 ## Family hub
 
-* `mail/source.py` `MailSource` sits between the engine and the readers: with `mail.source` = `auto` | `hub` it reads the hub's mail gateway (`fam_mail`) from the stored position `mail.hub.since_id` (interest: `interest_spec()`), returns records shaped like the Faustus helper's, and the engine moves the position (`commit`) and claims the filed mails (`claim`) only after they are stored. A deep scan goes to the Faustus reader in `auto`.
-* `notify/__init__.py`: with `notify.via` = `auto` | `hub` the push channels become one `fam_notify.notify` call; the `hub` channel (the bus event `phileas.update` / `phileas.trip.update`) is unchanged.
+* `mail/source.py` `MailSource` sits between the engine and the readers and is a thin layer over the commons' `MailRouter`: with `mail.source` = `auto` | `hub` it reads the hub's mail gateway (`fam_mail`) from the stored position `mail.hub.since_id` (interest: `interest_spec()`), returns records shaped like the Faustus helper's, and the engine moves the position (`commit`) and claims the filed mails (`claim`) only after they are stored. A deep scan goes to the Faustus reader in `auto`.
+* `notify/__init__.py`: the channels (toast, hub bus, ntfy, Telegram, email) are the commons' `notify_channels`; with `notify.via` = `auto` | `hub` the push channels become one `fam_notify.Router` call; the `hub` channel (the bus event `phileas.update` / `phileas.trip.update`) is unchanged. What stays in Phileas is which events notify, the quiet hours and the once-only keys.
 * `agenda.py` answers `GET /api/family/agenda` (deliveries, pickup deadlines, trips, departures).
 * `engine._emit_shipment` and `apply_status` emit `phileas.shipment.new`, `phileas.shipment.delivered` and `phileas.status` (live parcels only).
 
@@ -88,3 +88,15 @@ Tables (migration 2): `trips`, `segments`, `segment_mails`, `trip_people`, `trip
 - **Expenses (`expenses.py`).** Integer cents, largest-remainder apportioning, base currency plus a typed rate per expense; the minimum number of transfers is exact (subsets that balance among themselves, up to 16 people) and greedy beyond.
 - **Calendar (`ics.py`).** RFC 5545 with UTC times, all-day stays, line folding and an absolute alarm at check-in opening.
 - **Airports (`airports.py`).** `tables/airports.json` from `scripts/gen_airports.py` (airportsdata, MIT).
+
+## Shared code (`phileas_hoard/hoard_link/`, vendored, never edited here)
+
+Everything that is not parcels or trips comes from the family's vendored library, the same files in every app:
+
+- the app shell: `service` (JSON error envelope, PWA manifest and worker, built-UI fallback, `/api/health`, `python -m` start-up), `guard` (host and origin checks, `allowed_hosts` pinned to the port), `appconfig` and `tokens` (config and token files), the port picking;
+- the tool kit: `agentkit` (`Tool`, `make_agent_router`, `call_tool`, `tool_catalog`, `confirm`) and `bridge.CatalogBridge` (the whole of `mcp_server.py`); `errors.PhileasError` is a subclass of the commons' `AppError` with Phileas's codes;
+- `sqlkit.Database` (the SQLite wrapper behind `db.py`), `lanes.LaneScheduler` (behind `scheduler.py`), `ids.new_id` (shipment, trip, segment, person and expense ids);
+- `tracking` (carrier formats, check digits, link unwrapping, behind `numbers.py`), `bizdays` (holiday calendars, behind `bizdays.py`), `money` (price reading, shares and settlement behind `travel/expenses.py`), `ics.build_ics` (behind `travel/ics.py`), `web.browser` (the off-screen browser rung behind `carriers/browser.py`), `web.meta.jsonld_blocks` (reservation markup);
+- `notify_channels`, `fam_notify`, `fam_mail` and `mail_helper` (notifications and mail, above).
+
+What stays in Phileas is the parcel and trip knowledge: carrier adapters, the mail rules, the estimate, linking and status rules, the travel reading, trips, check-in and reminders. Re-exports kept for old imports: `phileas_hoard.numbers`, `bizdays.Calendar`, `carriers.browser.available()`.

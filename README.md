@@ -69,9 +69,13 @@ Events on the family bus: `phileas.update` (every parcel notification), `phileas
 
 ## How it is built
 
-FastAPI + SQLite (WAL) + a three-lane scheduler (checks, mail, travel); React + Vite UI; carrier adapters in `phileas_hoard/carriers/`; the travel facet in `phileas_hoard/travel/` (reading, trips, check-in, expenses, calendar) with its tools in `phileas_hoard/travel_tools.py`; the mail rules in `phileas_hoard/mail/parse.py`; the estimate in `phileas_hoard/eta.py`; delivery days in `phileas_hoard/bizdays.py`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+FastAPI + SQLite (WAL) + a three-lane scheduler (checks, mail, travel; the lanes are the family's shared `LaneScheduler`); React + Vite UI; carrier adapters in `phileas_hoard/carriers/`; the travel facet in `phileas_hoard/travel/` (reading, trips, check-in, expenses, calendar) with its tools in `phileas_hoard/travel_tools.py`; the mail rules in `phileas_hoard/mail/parse.py`; the estimate in `phileas_hoard/eta.py`; delivery days in `phileas_hoard/bizdays.py`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 Tests: `python -m pytest -q` (no network; recorded carrier answers and synthetic mails).
+
+## Shared code
+
+Everything that is not parcels or trips comes from the family's vendored library (`phileas_hoard/hoard_link/`, the same files in every app): the app shell (error format, PWA, built UI, health probe, `python -m` start-up, request guard, config and token files), the MCP tool kit and bridge (`mcp_server.py` is ten lines), the SQLite wrapper, the background lanes, ULID ids, tracking-number formats and check digits, delivery-day calendars, price reading and expense settlement, the iCalendar builder, the off-screen browser step, JSON-LD reading, the notification channels and router, and the Faustus mail helper (the old `mail/faustus_mail.py` is gone). What stays in Phileas is the parcel and trip knowledge. Behaviour you may notice: new records get prefixed ULID ids (old short ids keep working), an allowed host written with a port is pinned to that port, API errors are always JSON with a `code`, Sunday holidays move to Monday in the delivery-day calendar and Valencia follows the shared holiday table, calendar files end lodging stays on the exclusive end day, and the carrier pages are opened with the family's common browser identifier.
 
 ## Limits
 
