@@ -128,16 +128,26 @@ class _Cluster:
         # cancelled legs still say where the trip began and ended: cancelling one must not split the trip
         return sorted((s for s in self.segs if s.get("kind") in TRANSPORT), key=lambda s: s.get("dep_ts") or 0)
 
+    def _by_home(self, home: Home) -> bool:
+        """Home decides when the cluster touches it; a trip that never involves home (a weekend away from another city) is judged by its own first place."""
+        if not (home.city or home.airports):
+            return False
+        return any(home.is_home(s, "from") or home.is_home(s, "to") for s in self._transport())
+
+    def _first_city(self) -> str:
+        transport = self._transport()
+        return fold(transport[0].get("from_city") or transport[0].get("from_name") or "") if transport else ""
+
     def closed(self, home: Home) -> bool:
         """The traveller is back where the trip began."""
         transport = self._transport()
         if not transport:
             return False
         last = transport[-1]
-        if home.city or home.airports:
+        if self._by_home(home):
             left_home = any(home.is_home(s, "from") and not home.is_home(s, "to") for s in transport)
             return left_home and home.is_home(last, "to")
-        first_city = fold(transport[0].get("from_city") or transport[0].get("from_name") or "")
+        first_city = self._first_city()
         return len(transport) >= 2 and bool(first_city) and fold(last.get("to_city") or last.get("to_name") or "") == first_city
 
     def away(self, home: Home) -> bool:
@@ -146,20 +156,19 @@ class _Cluster:
         if not transport:
             return False
         last = transport[-1]
-        if home.city or home.airports:
+        if self._by_home(home):
             return any(home.is_home(s, "from") and not home.is_home(s, "to") for s in transport) and not home.is_home(last, "to")
-        first_city = fold(transport[0].get("from_city") or transport[0].get("from_name") or "")
+        first_city = self._first_city()
         return bool(first_city) and fold(last.get("to_city") or last.get("to_name") or "") != first_city
 
     def returns(self, s: dict[str, Any], home: Home) -> bool:
         """Does ``s`` bring the traveller back to where this trip began?"""
         if s.get("kind") not in TRANSPORT:
             return False
-        if home.city or home.airports:
+        if self._by_home(home):
             return home.is_home(s, "to")
-        transport = self._transport()
-        first_city = fold(transport[0].get("from_city") or "") if transport else ""
-        return bool(first_city) and fold(s.get("to_city") or "") == first_city
+        first_city = self._first_city()
+        return bool(first_city) and fold(s.get("to_city") or s.get("to_name") or "") == first_city
 
 
 def _fits(cluster: _Cluster, s: dict[str, Any], gap: int, home: Home) -> bool:

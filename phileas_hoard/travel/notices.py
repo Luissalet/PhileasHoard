@@ -34,6 +34,8 @@ def label(seg: dict[str, Any], lang: str = "es") -> str:
         return seg.get("provider") or kind_label(LODGING, lang)
     if seg.get("kind") == "car":
         return f"{kind_label('car', lang)} {seg.get('provider') or ''}".strip()
+    if seg.get("kind") == "event":
+        return seg.get("provider") or (seg.get("notes") or "").split("\n")[0][:60] or kind_label("event", lang)
     head = seg.get("number") or seg.get("carrier") or kind_label(seg.get("kind") or "", lang)
     return f"{head} {place(seg, 'from', lang)} → {place(seg, 'to', lang)}".strip()
 

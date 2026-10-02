@@ -188,3 +188,17 @@ def test_all_segments_cancelled_cancels_the_trip(tv):
     s = flight(tv, "IB3166", "MAD", "LIS", "2026-11-12T09:05", "2026-11-12T09:55")
     tv.update_segment(s["id"], status="cancelled")
     assert tv.trips_list("all")[0]["status"] == "cancelled"
+
+
+def test_a_round_trip_that_never_touches_home_stays_together(tv):
+    # someone based in Madrid flying Barcelona - Palma - Barcelona with a quiet spell between the legs
+    flight(tv, "VY8421", "BCN", "PMI", "2026-12-03T07:15", "2026-12-03T08:20")
+    flight(tv, "VY8422", "PMI", "BCN", "2026-12-07T21:10", "2026-12-07T22:15")
+    assert titles(tv) == [("Palma · 3–7 dic 2026", 2)]
+
+
+def test_an_activity_has_its_own_label_and_timeline_role(tv):
+    seg = tv.add_segment(kind="event", provider="Visita guiada", dep_local="2026-11-13T17:00", arr_local="2026-11-13T19:00")["segment"]
+    assert seg["label"] == "Visita guiada"
+    day = next(d for d in tv.trip_detail(seg["trip_id"])["timeline"] if d["date"] == "2026-11-13")
+    assert [(i["role"], i["time"]) for i in day["items"]] == [("event", "17:00")]

@@ -10,7 +10,7 @@ from ..errors import PhileasError
 from . import airports, checkin, expenses as exp, hubcalls, ics, notices, segments as seglib, trips as tripslib
 from .airlines import fold
 from .draft import SegmentDraft
-from .model import (CANCELLED, CAR, CONFIRMED, EXPENSE_CATEGORIES, FLIGHT, KINDS, LODGING, ONGOING, PAST, SPLIT_MODES, TRANSPORT, UPCOMING, kind_label)
+from .model import (CANCELLED, CAR, CONFIRMED, EVENT, EXPENSE_CATEGORIES, FLIGHT, KINDS, LODGING, ONGOING, PAST, SPLIT_MODES, TRANSPORT, UPCOMING, kind_label)
 
 SEGMENT_INPUT = ("kind", "booking_ref", "carrier", "carrier_code", "number", "provider", "from_code", "from_name", "from_city", "from_country", "to_code",
                  "to_name", "to_city", "to_country", "dep_local", "dep_tz", "arr_local", "arr_tz", "terminal", "gate", "seat", "coach", "travel_class",
@@ -72,11 +72,13 @@ class Ops:
                 add(a, "pickup", seg, notices.hhmm(seg.get("dep_local") or ""))
                 if b != a:
                     add(b, "dropoff", seg, notices.hhmm(seg.get("arr_local") or ""))
+            elif seg["kind"] == EVENT:
+                add(a, "event", seg, notices.hhmm(seg.get("dep_local") or ""))
             else:
                 add(a, "departs", seg, notices.hhmm(seg.get("dep_local") or ""))
                 if b and b != a:
                     add(b, "arrives", seg, notices.hhmm(seg.get("arr_local") or ""))
-        order = {"checkout": 0, "arrives": 1, "stay": 2, "pickup": 3, "departs": 4, "checkin": 5, "dropoff": 6}
+        order = {"checkout": 0, "arrives": 1, "stay": 2, "pickup": 3, "departs": 4, "event": 4, "checkin": 5, "dropoff": 6}
         return [{"date": day, "items": sorted(items, key=lambda i: (i["time"] or "99:99", order.get(i["role"], 9)))} for day, items in days.items()]
 
     def trip_card(self, trip: dict[str, Any], cfg: Any = None, segs: Optional[list[dict[str, Any]]] = None) -> dict[str, Any]:

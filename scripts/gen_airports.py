@@ -16,6 +16,15 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "phileas_hoard" / "travel" / "tables" / "airports.json"
 
 
+# The source capitalises every word ("Palma De Mallorca"): small joining words stay lower case inside a name.
+PARTICLES = {"de", "del", "della", "di", "da", "do", "dos", "das", "du", "des", "of", "the", "and", "y", "am", "der", "von", "van", "den"}
+
+
+def tidy(text: str) -> str:
+    words = text.split(" ")
+    return " ".join(w.lower() if i and w.lower() in PARTICLES else w for i, w in enumerate(words))
+
+
 def main() -> int:
     try:
         import airportsdata
@@ -27,7 +36,7 @@ def main() -> int:
     for code, a in sorted(data.items()):
         if len(code) != 3 or not a.get("tz"):
             continue
-        rows[code] = [a["name"][:60], a["city"][:40], a["country"], a["tz"]]
+        rows[code] = [tidy(a["name"])[:60], tidy(a["city"])[:40], a["country"], a["tz"]]
     payload = {"source": f"airportsdata {getattr(airportsdata, '__version__', '')}".strip(), "licence": "MIT (airportsdata)",
                "columns": ["name", "city", "country", "tz"], "airports": rows}
     OUT.parent.mkdir(parents=True, exist_ok=True)
