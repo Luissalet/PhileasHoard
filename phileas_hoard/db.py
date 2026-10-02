@@ -133,6 +133,120 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX runs_ts ON runs(ts);
     """,
+    # 2: travel facet — trips, segments (flights, trains, stays…), the mails they came from, trip people and shared expenses
+    """
+    ALTER TABLE notifications ADD COLUMN trip_id TEXT;
+    CREATE TABLE trips (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL DEFAULT '',
+      destination TEXT NOT NULL DEFAULT '',
+      destination_country TEXT NOT NULL DEFAULT '',
+      start_date TEXT NOT NULL DEFAULT '',
+      end_date TEXT NOT NULL DEFAULT '',
+      currency TEXT NOT NULL DEFAULT 'EUR',
+      pinned INTEGER NOT NULL DEFAULT 0,
+      cancelled INTEGER NOT NULL DEFAULT 0,
+      history_only INTEGER NOT NULL DEFAULT 0,
+      muted INTEGER NOT NULL DEFAULT 0,
+      notes TEXT NOT NULL DEFAULT '',
+      created_ts REAL NOT NULL,
+      updated_ts REAL NOT NULL,
+      extra TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX trips_dates ON trips(start_date, end_date);
+    CREATE TABLE segments (
+      id TEXT PRIMARY KEY,
+      trip_id TEXT REFERENCES trips(id) ON DELETE SET NULL,
+      locked INTEGER NOT NULL DEFAULT 0,
+      kind TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'confirmed',
+      booking_ref TEXT NOT NULL DEFAULT '',
+      carrier TEXT NOT NULL DEFAULT '',
+      carrier_code TEXT NOT NULL DEFAULT '',
+      number TEXT NOT NULL DEFAULT '',
+      provider TEXT NOT NULL DEFAULT '',
+      from_code TEXT NOT NULL DEFAULT '',
+      from_name TEXT NOT NULL DEFAULT '',
+      from_city TEXT NOT NULL DEFAULT '',
+      from_country TEXT NOT NULL DEFAULT '',
+      to_code TEXT NOT NULL DEFAULT '',
+      to_name TEXT NOT NULL DEFAULT '',
+      to_city TEXT NOT NULL DEFAULT '',
+      to_country TEXT NOT NULL DEFAULT '',
+      dep_local TEXT NOT NULL DEFAULT '',
+      dep_tz TEXT NOT NULL DEFAULT '',
+      dep_offset INTEGER,
+      dep_ts REAL,
+      arr_local TEXT NOT NULL DEFAULT '',
+      arr_tz TEXT NOT NULL DEFAULT '',
+      arr_offset INTEGER,
+      arr_ts REAL,
+      start_date TEXT NOT NULL DEFAULT '',
+      end_date TEXT NOT NULL DEFAULT '',
+      terminal TEXT NOT NULL DEFAULT '',
+      gate TEXT NOT NULL DEFAULT '',
+      seat TEXT NOT NULL DEFAULT '',
+      coach TEXT NOT NULL DEFAULT '',
+      travel_class TEXT NOT NULL DEFAULT '',
+      passengers TEXT NOT NULL DEFAULT '[]',
+      price REAL,
+      currency TEXT NOT NULL DEFAULT '',
+      links TEXT NOT NULL DEFAULT '[]',
+      address TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      source TEXT NOT NULL DEFAULT 'manual',
+      confidence INTEGER NOT NULL DEFAULT 100,
+      evidence TEXT NOT NULL DEFAULT '[]',
+      needs_review INTEGER NOT NULL DEFAULT 0,
+      checkin_done INTEGER NOT NULL DEFAULT 0,
+      checkin_done_ts REAL,
+      edited INTEGER NOT NULL DEFAULT 0,
+      history_only INTEGER NOT NULL DEFAULT 0,
+      created_ts REAL NOT NULL,
+      updated_ts REAL NOT NULL,
+      last_change_ts REAL,
+      last_mail_ts REAL,
+      extra TEXT NOT NULL DEFAULT '{}'
+    );
+    CREATE INDEX segments_trip ON segments(trip_id, dep_ts);
+    CREATE INDEX segments_ref ON segments(booking_ref);
+    CREATE INDEX segments_dep ON segments(dep_ts);
+    CREATE TABLE segment_mails (
+      segment_id TEXT NOT NULL REFERENCES segments(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL,
+      ts REAL,
+      role TEXT NOT NULL DEFAULT 'confirmation',
+      PRIMARY KEY (segment_id, message_id)
+    );
+    CREATE TABLE trip_people (
+      id TEXT PRIMARY KEY,
+      trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      is_me INTEGER NOT NULL DEFAULT 0,
+      position INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX trip_people_trip ON trip_people(trip_id, position);
+    CREATE TABLE trip_expenses (
+      id TEXT PRIMARY KEY,
+      trip_id TEXT NOT NULL REFERENCES trips(id) ON DELETE CASCADE,
+      description TEXT NOT NULL DEFAULT '',
+      amount REAL NOT NULL,
+      currency TEXT NOT NULL DEFAULT 'EUR',
+      rate REAL NOT NULL DEFAULT 1,
+      payer_id TEXT NOT NULL,
+      split_mode TEXT NOT NULL DEFAULT 'equal',
+      split TEXT NOT NULL DEFAULT '{}',
+      date TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT 'other',
+      segment_id TEXT,
+      ledger_sent_ts REAL,
+      ledger_amount REAL,
+      ledger_entry TEXT NOT NULL DEFAULT '',
+      created_ts REAL NOT NULL,
+      updated_ts REAL NOT NULL
+    );
+    CREATE INDEX trip_expenses_trip ON trip_expenses(trip_id, date);
+    """,
 ]
 
 

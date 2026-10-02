@@ -32,7 +32,7 @@ phileas-hoard = "phileas_hoard.__main__:main"
 include = ["phileas_hoard*"]
 
 [tool.setuptools.package-data]
-phileas_hoard = ["static/**/*"]
+phileas_hoard = ["static/**/*", "travel/tables/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
