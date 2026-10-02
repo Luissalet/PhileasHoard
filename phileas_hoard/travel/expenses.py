@@ -1,17 +1,16 @@
 """Shared trip expenses: splitting, balances and the fewest transfers that settle them.
 
 Everything is computed in integer cents of the trip's base currency (an expense in another currency carries its own manual rate),
-so shares always add up to the amount to the cent, with the odd cents given by largest remainder.
+so shares always add up to the amount to the cent, with the odd cents given by largest remainder. Splitting and settling are the
+shared ``money.split_shares`` and ``money.settle``.
 """
 
 from __future__ import annotations
 
-import math
 from typing import Any, Optional
 
 from ..errors import PhileasError
-
-EXACT_LIMIT = 16        # settle is exact up to this many people with a balance; beyond it a greedy pass is used
+from ..hoard_link.money import settle, split_shares  # noqa: F401 - settle: the fewest transfers that clear the balances
 
 
 def cents(amount: float, rate: float = 1.0) -> int:
@@ -23,18 +22,12 @@ def base_cents(expense: dict[str, Any]) -> int:
 
 
 def apportion(total: int, weights: dict[str, float], order: list[str]) -> dict[str, int]:
-    """Split ``total`` cents by weight; the leftover cents go to the largest fractional parts (ties: earlier in ``order``)."""
-    weights = {k: float(w) for k, w in weights.items() if float(w) > 0}
-    whole = sum(weights.values())
-    if not weights or whole <= 0:
+    """Split ``total`` cents by weight (``money.split_shares``); the leftover cents go to the largest fractional parts (ties: earlier in ``order``)."""
+    positive = [(k, float(w)) for k, w in weights.items() if float(w) > 0]
+    if not positive:
         raise PhileasError("invalid", "A split needs at least one person with a share.")
-    raw = {k: total * w / whole for k, w in weights.items()}
-    out = {k: int(math.floor(v + 1e-9)) for k, v in raw.items()}
-    left = total - sum(out.values())
-    ranked = sorted(raw, key=lambda k: (-(raw[k] - out[k]), order.index(k) if k in order else 999))
-    for k in ranked[:max(0, left)]:
-        out[k] += 1
-    return out
+    positive.sort(key=lambda kw: order.index(kw[0]) if kw[0] in order else 999)
+    return split_shares(total, dict(positive))
 
 
 def validate(expense: dict[str, Any], person_ids: list[str], base_currency: str) -> None:
@@ -98,72 +91,6 @@ def balances(people: list[dict[str, Any]], expenses: list[dict[str, Any]]) -> li
             owed[pid] += c
     return [{"person_id": p["id"], "name": p["name"], "is_me": p.get("is_me", False), "paid": paid[p["id"]], "owed": owed[p["id"]],
              "net": paid[p["id"]] - owed[p["id"]]} for p in people]
-
-
-def settle(net: dict[str, int]) -> list[dict[str, Any]]:
-    """The fewest transfers that bring every net balance to zero: ``[{"from", "to", "cents"}]`` (debtor pays creditor).
-
-    Exact: people are grouped into the largest number of subsets that already balance among themselves; a group of k people needs
-    k-1 transfers, so more groups means fewer transfers. Beyond ``EXACT_LIMIT`` people with a balance a greedy pass is used."""
-    ids = [k for k, v in net.items() if v != 0]
-    if not ids:
-        return []
-    groups = _groups(ids, net) if len(ids) <= EXACT_LIMIT else [ids]
-    out: list[dict[str, Any]] = []
-    for group in groups:
-        debtors = sorted(([-net[i], i] for i in group if net[i] < 0), key=lambda x: (-x[0], x[1]))
-        creditors = sorted(([net[i], i] for i in group if net[i] > 0), key=lambda x: (-x[0], x[1]))
-        while debtors and creditors:
-            amount = min(debtors[0][0], creditors[0][0])
-            out.append({"from": debtors[0][1], "to": creditors[0][1], "cents": amount})
-            debtors[0][0] -= amount
-            creditors[0][0] -= amount
-            if debtors[0][0] == 0:
-                debtors.pop(0)
-            if creditors and creditors[0][0] == 0:
-                creditors.pop(0)
-            debtors.sort(key=lambda x: (-x[0], x[1]))
-            creditors.sort(key=lambda x: (-x[0], x[1]))
-    return out
-
-
-def _groups(ids: list[str], net: dict[str, int]) -> list[list[str]]:
-    n = len(ids)
-    full = (1 << n) - 1
-    total = [0] * (1 << n)
-    for mask in range(1, 1 << n):
-        low = (mask & -mask).bit_length() - 1
-        total[mask] = total[mask & (mask - 1)] + net[ids[low]]
-    best = [0] * (1 << n)
-    pick = [0] * (1 << n)
-    for mask in range(1, 1 << n):
-        top, choice = -1, 0
-        for i in range(n):
-            if mask >> i & 1:
-                value = best[mask ^ (1 << i)]
-                if value > top:
-                    top, choice = value, i
-        best[mask] = top + (1 if total[mask] == 0 else 0)
-        pick[mask] = choice
-    order: list[int] = []
-    mask = full
-    while mask:
-        i = pick[mask]
-        order.append(i)
-        mask ^= 1 << i
-    order.reverse()
-    groups: list[list[str]] = []
-    current: list[str] = []
-    running = 0
-    for i in order:
-        current.append(ids[i])
-        running += net[ids[i]]
-        if running == 0:
-            groups.append(current)
-            current = []
-    if current:
-        groups.append(current)
-    return groups
 
 
 def my_share(expense: dict[str, Any], me_id: Optional[str], person_ids: list[str]) -> int:

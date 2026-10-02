@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 from .. import numbers as _numbers
+from ..hoard_link.money import currency_of, parse_amount
 from . import airports
 from .airlines import AIRLINES, code_for_name, fold
 from .draft import SegmentDraft
@@ -122,20 +123,15 @@ def find_passengers(text: str) -> list[str]:
     return out[:9]
 
 
-CUR = {"€": "EUR", "£": "GBP", "$": "USD", "eur": "EUR", "gbp": "GBP", "usd": "USD", "chf": "CHF"}
 AMT = r"(\d{1,3}(?:[.  ]\d{3})+[.,]\d{2}|\d{1,6}[.,]\d{2})"
 RE_PRICE_TOTAL = re.compile(r"(?:precio total|importe total|total a pagar|total pagado|total del (?:pedido|viaje|billete)|total price|total amount|amount paid|"
                             r"grand total|\btotal\b)[^\n\d€£$]{0,24}(?:(€|£|\$|EUR|GBP|USD)\s*)?" + AMT + r"\s*(€|£|\$|EUR|GBP|USD)?", re.I)
 
 
 def _amount(raw: str) -> Optional[float]:
-    raw = raw.replace(" ", "").replace(" ", "")
-    if len(raw) < 4 or raw[-3] not in ".,":
-        return None
-    try:
-        return float(re.sub(r"[.,]", "", raw[:-3]) + "." + raw[-2:])
-    except ValueError:
-        return None
+    """An amount written with two decimals as a float, through the shared money parser."""
+    value = parse_amount(raw, currency_hint="EUR")
+    return float(value) if value is not None else None
 
 
 def find_price(text: str) -> tuple[Optional[float], str]:
@@ -143,8 +139,8 @@ def find_price(text: str) -> tuple[Optional[float], str]:
     if not m:
         return None, ""
     value = _amount(m.group(2))
-    cur = (m.group(1) or m.group(3) or "").lower()
-    return (value, CUR.get(cur, "EUR")) if value is not None else (None, "")
+    cur = currency_of(m.group(1) or m.group(3) or "")
+    return (value, cur or "EUR") if value is not None else (None, "")
 
 
 LINK_KINDS = [("checkin", re.compile(r"check-?in|facturar|facturaci|embarque online|online-checkin|boarding", re.I)),

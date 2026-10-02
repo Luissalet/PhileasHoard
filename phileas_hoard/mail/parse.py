@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from .. import numbers
+from ..hoard_link.money import parse_amount
 from ..model import (AVAILABLE_FOR_PICKUP, DELIVERED, EXCEPTION, FAILED_ATTEMPT, IN_TRANSIT, LABEL_CREATED, ORDERED,
                      OUT_FOR_DELIVERY, RETURNED)
 
@@ -381,13 +382,9 @@ AMOUNT = r"(\d{1,3}(?:[.\u00a0 ]\d{3})+[.,]\d{2}|\d{1,7}[.,]\d{2})"
 
 
 def _amount(raw: str) -> Optional[float]:
-    raw = raw.replace("\u00a0", " ").replace(" ", "")
-    decimal = raw[-3]
-    whole = re.sub(r"[.,]", "", raw[:-3])
-    try:
-        return float(f"{whole}.{raw[-2:]}") if decimal in ".," else None
-    except ValueError:
-        return None
+    """An amount written with two decimals ("1.198,55", "125,69", "1 299.00") as a float, through the shared money parser."""
+    value = parse_amount(raw, currency_hint="EUR")
+    return float(value) if value is not None else None
 
 
 def find_price(text: str) -> tuple[Optional[float], str]:

@@ -11,6 +11,7 @@ import re
 from html.parser import HTMLParser
 from typing import Any, Iterable, Optional
 
+from ..hoard_link.money import parse_amount
 from .airlines import AIRLINES, split_flight_number
 from .draft import SegmentDraft
 from .model import BUS, CANCELLED, CAR, CONFIRMED, EVENT, FERRY, FLIGHT, LODGING, TRAIN
@@ -179,16 +180,16 @@ def _price(res: dict[str, Any]) -> tuple[Optional[float], str]:
     if isinstance(total, dict):
         cur = cur or _s(total.get("priceCurrency"))
         total = total.get("value") or total.get("price")
-    m = re.search(r"\d+(?:[.,]\d+)?", str(total or "").replace(" ", ""))
-    if not m:
+    text = str(total if total is not None else "").strip()
+    if not re.search(r"\d", text):
         return None, cur
-    raw = m.group(0)
-    if "," in raw and "." not in raw:
-        raw = raw.replace(",", ".")
-    try:
-        return float(raw), cur
-    except ValueError:
-        return None, cur
+    # schema.org prices use a dot ("1234.50"); a lone comma is a decimal comma, both together are unambiguous
+    decimal = "," if "," in text and "." not in text else "." if "." in text and "," not in text else None
+    value = parse_amount(text, decimal=decimal, currency_hint=cur or None)
+    if value is None:                      # prose around the number ("123.45 per person"): the first number in it
+        m = re.search(r"\d+(?:[.,]\d+)?", text.replace(" ", ""))
+        value = parse_amount(m.group(0), decimal=decimal, currency_hint=cur or None) if m else None
+    return (float(value), cur) if value is not None else (None, cur)
 
 
 def _links(res: dict[str, Any], parent: Optional[dict[str, Any]] = None) -> list[dict[str, str]]:
