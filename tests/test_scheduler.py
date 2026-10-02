@@ -88,3 +88,4 @@ def test_the_loop_runs_mail_housekeeping_and_due_checks():
         sched.stop()
     assert {("mail",), ("housekeeping",), ("check", "s9", "schedule")} <= set(engine.calls)
     assert sched.last_housekeeping_ts is not None and sched.jobs_done >= 3
+

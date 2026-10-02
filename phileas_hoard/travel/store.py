@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-import secrets
 import time
 from typing import Any, Callable, Iterable, Optional
 
 from ..db import Database
 from ..errors import PhileasError
+from ..hoard_link.ids import new_id
 
 TRIP_FIELDS = ("title", "destination", "destination_country", "start_date", "end_date", "currency", "pinned", "cancelled", "history_only",
                "muted", "notes", "extra")
@@ -25,10 +25,6 @@ TRIP_JSON = {"extra": "{}"}
 EXPENSE_JSON = {"split": "{}"}
 SEGMENT_BOOLS = ("locked", "needs_review", "checkin_done", "edited", "history_only")
 TRIP_BOOLS = ("pinned", "cancelled", "history_only", "muted")
-
-
-def new_id(prefix: str) -> str:
-    return f"{prefix}_{secrets.token_hex(5)}"
 
 
 def _load(row: Any, json_fields: dict[str, str], bool_fields: Iterable[str] = ()) -> Optional[dict[str, Any]]:

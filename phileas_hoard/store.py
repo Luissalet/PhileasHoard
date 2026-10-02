@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import json
-import secrets
 import time
 from typing import Any, Callable, Iterable, Optional
 
 from .db import Database
 from .errors import PhileasError
+from .hoard_link.ids import new_id
 from .model import ACTIVE, FINAL
 
 JSON_FIELDS = ("eta_basis", "extra")
@@ -21,10 +21,6 @@ SHIPMENT_FIELDS = (
     "eta_confidence", "eta_basis", "pickup_code", "pickup_place", "pickup_deadline", "price", "currency", "source", "history_only",
     "archived", "muted", "notes", "last_check_ts", "next_check_ts", "check_count", "fail_count", "last_error", "last_change_ts",
     "seen_ts", "extra")
-
-
-def new_id(prefix: str = "s") -> str:
-    return f"{prefix}_{secrets.token_hex(5)}"
 
 
 def _row(row: Any) -> Optional[dict[str, Any]]:
