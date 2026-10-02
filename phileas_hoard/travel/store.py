@@ -150,6 +150,24 @@ class TravelStore:
         self.segment(sid)
         self.db.execute("DELETE FROM segments WHERE id = ?", (sid,))
 
+    def forget_segment(self, seg: dict[str, Any], label: str = "") -> None:
+        """Remember that the user deleted this booking (with the mails it came from) so reading the same mail again does not recreate it."""
+        from .segments import tomb_key
+        ids = [m["message_id"] for m in self.mails_of_segment(seg["id"])]
+        self.db.execute("INSERT OR REPLACE INTO deleted_segments(key, kind, label, message_ids, ts) VALUES (?, ?, ?, ?, ?)",
+                        (tomb_key(seg), seg.get("kind") or "", label, json.dumps(ids), self.clock()))
+
+    def is_forgotten(self, row: dict[str, Any]) -> bool:
+        from .segments import tomb_key
+        return self.db.one("SELECT 1 FROM deleted_segments WHERE key = ?", (tomb_key(row),)) is not None
+
+    def unforget(self, row: dict[str, Any]) -> None:
+        from .segments import tomb_key
+        self.db.execute("DELETE FROM deleted_segments WHERE key = ?", (tomb_key(row),))
+
+    def deleted_segments(self) -> list[dict[str, Any]]:
+        return [dict(r) for r in self.db.query("SELECT key, kind, label, message_ids, ts FROM deleted_segments ORDER BY ts DESC")]
+
     def link_mail(self, segment_id: str, message_id: str, ts: Optional[float], role: str = "confirmation") -> None:
         self.db.execute("INSERT OR REPLACE INTO segment_mails(segment_id, message_id, ts, role) VALUES (?, ?, ?, ?)", (segment_id, message_id, ts, role))
 

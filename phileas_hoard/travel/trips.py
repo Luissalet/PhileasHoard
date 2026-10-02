@@ -294,6 +294,8 @@ def regroup(store: TravelStore, *, home: Home, gap_days: int = 2, lang: str = "e
     anchored: dict[str, list[dict[str, Any]]] = {}
     free: list[dict[str, Any]] = []
     for s in segs:
+        if (s.get("extra") or {}).get("no_trip"):
+            continue                                            # kept by hand without a trip: the grouping leaves it alone
         if s.get("locked") and s.get("trip_id") in trips:
             anchored.setdefault(s["trip_id"], []).append(s)
         else:

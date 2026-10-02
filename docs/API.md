@@ -369,7 +369,7 @@ Annotations: none.
 
 Rename, mute, cancel, merge, split a trip or move a segment between trips. Editar un viaje.
 
-merge_from (confirm=true) merges another trip into this one; split_segments moves some segments into a new trip; move_segment + to_trip moves one segment ('new' = its own trip, empty = let the grouping place it); delete (confirm=true) removes the trip but keeps its segments. Sinónimos: renombrar viaje, unir viajes, separar viaje, mover vuelo a otro viaje, silenciar avisos del viaje.
+merge_from (confirm=true) merges another trip into this one; split_segments moves some segments into a new trip; move_segment + to_trip moves one segment ('new' = its own trip, empty = let the grouping place it); delete (confirm=true) removes the trip and its bookings (keep_segments=true keeps them without a trip). Sinónimos: renombrar viaje, unir viajes, separar viaje, mover vuelo a otro viaje, silenciar avisos del viaje.
 
 Annotations: destructiveHint.
 
@@ -387,7 +387,8 @@ Annotations: destructiveHint.
 | `split_title` (string) | no | Title for the trip created by split_segments. |
 | `move_segment` (string/null) | no | Segment id to move. |
 | `to_trip` (string) | no | With move_segment: target trip id or title, 'new' for a trip of its own, or empty to let the grouping place it again. |
-| `delete` (boolean) | no | Delete the trip (its segments stay and are regrouped); needs confirm=true. |
+| `delete` (boolean) | no | Delete the trip AND its bookings (they are remembered as deleted, so reading the same mail again does not bring them back); needs confirm=true. |
+| `keep_segments` (boolean) | no | With delete: keep the bookings instead, detached and marked 'no trip' (the grouping leaves them alone). |
 | `confirm` (boolean) | no |  |
 
 ## `segment_add`

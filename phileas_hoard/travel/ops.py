@@ -206,13 +206,22 @@ class Ops:
             self.regroup(quiet=True)
         return self.trip_detail(trip["id"])
 
-    def delete_trip(self, key: str) -> dict[str, Any]:
+    def delete_trip(self, key: str, keep_segments: bool = False) -> dict[str, Any]:
+        """Delete a trip with its bookings (remembered as deleted, so a later read of the same mail does not bring them back). With
+        ``keep_segments`` the bookings stay, detached from any trip and marked "no trip" so the grouping leaves them alone."""
         trip = self.t.find_trip(key)
-        for s in self.t.segments(trip_id=trip["id"]):
-            self.t.update_segment(s["id"], locked=False)
+        lang = self.cfg().lang
+        segs = self.t.segments(trip_id=trip["id"], include_cancelled=True)
+        for s in segs:
+            if keep_segments:
+                self.t.update_segment(s["id"], trip_id=None, locked=False, extra={**(s.get("extra") or {}), "no_trip": True})
+            else:
+                self.t.forget_segment(s, notices.label(s, lang))
+                self.t.delete_segment(s["id"])
         self.t.delete_trip(trip["id"])
         self.regroup(quiet=True)
-        return {"deleted": trip["id"], "title": trip.get("title")}
+        return {"deleted": trip["id"], "title": trip.get("title"), "segments_deleted": 0 if keep_segments else len(segs),
+                "segments_kept": len(segs) if keep_segments else 0}
 
     def merge_trips(self, keep_key: str, drop_key: str) -> dict[str, Any]:
         keep, drop = self.t.find_trip(keep_key), self.t.find_trip(drop_key)
@@ -283,6 +292,7 @@ class Ops:
                                "dep_local is YYYY-MM-DD or YYYY-MM-DDTHH:MM, local time at the place.")
         row = seglib.row_from_draft(d, self.cfg().home.tz)
         row.update(needs_review=False, edited=True, locked=False, last_change_ts=self.now())
+        self.t.unforget(row)                                      # adding it by hand again is a decision too
         if trip:
             row.update(trip_id=self.t.find_trip(trip)["id"], locked=True)
         seg = self.t.create_segment(**row)
@@ -324,14 +334,18 @@ class Ops:
 
     def delete_segment(self, sid: str) -> dict[str, Any]:
         seg = self.t.segment(sid)
+        label = notices.label(seg, self.cfg().lang)
+        self.t.forget_segment(seg, label)
         self.t.delete_segment(sid)
         self.regroup(quiet=True)
-        return {"deleted": sid, "label": notices.label(seg, self.cfg().lang)}
+        return {"deleted": sid, "label": label}
 
     def move_segment(self, sid: str, trip: Optional[str]) -> dict[str, Any]:
         """``trip``: a trip id or title, ``"new"`` for a trip of its own, or empty to let the grouping place it again."""
         seg = self.t.segment(sid)
         cfg = self.cfg()
+        if (seg.get("extra") or {}).get("no_trip"):
+            self.t.update_segment(sid, extra={k: v for k, v in (seg.get("extra") or {}).items() if k != "no_trip"})
         if trip == "new":
             start, end = tripslib.span([seg])
             dest, country = tripslib.destination_of([seg], cfg.home)

@@ -454,9 +454,14 @@ export default function Viaje({ param, query }) {
   const today = new Date().toISOString().slice(0, 10);
   const doc = (name, args, message) => run(name, async () => { await api.call("trip_update", { trip: trip.id, ...args }); if (message) notify(message); await after(); });
   const delTrip = async () => {
-    const ok = await confirm({ title: t("trip_delete"), message: t("trip_delete_msg") });
+    const ok = await confirm({ title: t("trip_delete"), message: t("trip_delete_msg", { n: segments.length }) });
     if (!ok) return;
     run("del", async () => { await api.call("trip_update", { trip: trip.id, delete: true, confirm: true }); notify(t("trip_deleted")); refreshDash(); window.location.hash = "#/viajes"; });
+  };
+  const delTripKeep = async () => {
+    const ok = await confirm({ title: t("trip_delete_keep"), message: t("trip_delete_keep_msg") });
+    if (!ok) return;
+    run("delkeep", async () => { await api.call("trip_update", { trip: trip.id, delete: true, keep_segments: true, confirm: true }); notify(t("trip_deleted")); refreshDash(); window.location.hash = "#/viajes"; });
   };
   const delSeg = async (s) => {
     const ok = await confirm({ title: t("seg_delete"), message: t("seg_delete_msg", { name: s.label }) });
@@ -494,6 +499,7 @@ export default function Viaje({ param, query }) {
           {others.length > 0 && <button type="button" className="btn btn-sm" onClick={() => setModal({ kind: "merge" })}>{t("trip_merge")}</button>}
           <Busy className="btn btn-sm" busy={busy.cancel} onClick={() => doc("cancel", { cancelled: !trip.cancelled })}>{trip.cancelled ? t("trip_uncancel") : t("trip_cancel")}</Busy>
           <button type="button" className="btn btn-sm btn-danger" onClick={delTrip}>{t("trip_delete")}</button>
+          <button type="button" className="btn btn-sm" onClick={delTripKeep}>{t("trip_delete_keep")}</button>
         </div>
       </header>
 

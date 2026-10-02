@@ -37,6 +37,16 @@ def _place(s: dict[str, Any], side: str) -> str:
     return fold(s.get(f"{side}_code") or s.get(f"{side}_name") or s.get(f"{side}_city") or "")
 
 
+def tomb_key(row: dict[str, Any]) -> str:
+    """What identifies a booked leg across re-reads (a rescheduling keeps it): reference and route, else number, route and day."""
+    kind = row.get("kind") or ""
+    ref = (row.get("booking_ref") or "").upper()
+    place = (_place(row, "from"), fold(row.get("provider") or "") if kind == LODGING else _place(row, "to"))
+    if ref:
+        return "|".join((kind, ref, *place))
+    return "|".join((kind, row.get("number") or "", *place, row.get("start_date") or ""))
+
+
 def same_leg(existing: dict[str, Any], incoming: dict[str, Any]) -> bool:
     """Is ``incoming`` (a draft row) the same booked leg as ``existing``? A changed time still counts when the reference and the route match."""
     if existing.get("kind") != incoming.get("kind"):

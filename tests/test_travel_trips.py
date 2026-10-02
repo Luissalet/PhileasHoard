@@ -159,15 +159,6 @@ def test_manual_empty_trip_is_kept_when_pinned_only(tv):
     assert titles(tv) == [("Pendiente", 0)]
 
 
-def test_deleting_a_trip_keeps_its_segments(tv):
-    flight(tv, "IB3166", "MAD", "LIS", "2026-11-12T09:05", "2026-11-12T09:55")
-    flight(tv, "IB3167", "LIS", "MAD", "2026-11-15T20:30", "2026-11-15T23:15")
-    trip = tv.trips_list("all")[0]
-    out = tv.delete_trip(trip["id"])
-    assert out["deleted"] == trip["id"]
-    assert len(tv.t.segments()) == 2 and len(tv.trips_list("all")) == 1       # regrouped into a fresh trip
-
-
 def test_statuses_follow_the_clock(tv):
     flight(tv, "IB3166", "MAD", "LIS", "2026-11-12T09:05", "2026-11-12T09:55")
     flight(tv, "IB3167", "LIS", "MAD", "2026-11-15T20:30", "2026-11-15T23:15")

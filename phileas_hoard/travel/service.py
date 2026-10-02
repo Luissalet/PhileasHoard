@@ -165,7 +165,7 @@ class Travel(Ops):
                 facts.source = "model" if model["drafts"] else "none"
                 state = "new"
         else:
-            filed = self._file(message, drafts, facts.change, quiet, cfg, ref=facts.ref)
+            filed = self._file(message, drafts, facts.change, quiet, cfg, ref=facts.ref, revive=force_travel)
             summary.update(filed)
         data = facts.to_dict()
         if state == "new":
@@ -269,7 +269,8 @@ class Travel(Ops):
 
     # ------------------------------------------------------------------ filing
     def _file(self, message: dict[str, Any], drafts: list[SegmentDraft], change: str, quiet: bool, cfg: Config, *, ref: str = "",
-              accepted: bool = False) -> dict[str, Any]:
+              accepted: bool = False, revive: bool = False) -> dict[str, Any]:
+        revive = revive or accepted
         mid = str(message.get("message_id") or "")
         ts = float(message.get("ts") or self.now())
         out: dict[str, Any] = {"created": 0, "updated": 0, "cancelled": 0, "segments": [], "trips": []}
@@ -283,6 +284,11 @@ class Travel(Ops):
             if match is None:
                 if cancel:
                     continue                                    # a cancellation for something never booked here
+                if self.t.is_forgotten(row):
+                    if not revive:
+                        out["skipped_deleted"] = out.get("skipped_deleted", 0) + 1
+                        continue                                # the user deleted this booking: reading its mail again does not bring it back
+                    self.t.unforget(row)
                 end_ts = row.get("arr_ts") or row.get("dep_ts")
                 row.update(trip_id=None, locked=False, history_only=bool(quiet and end_ts and end_ts < self.now() - 10 * 86400), last_change_ts=ts)
                 if accepted:

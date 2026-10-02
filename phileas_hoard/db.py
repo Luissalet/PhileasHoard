@@ -247,6 +247,16 @@ MIGRATIONS: list[str] = [
     );
     CREATE INDEX trip_expenses_trip ON trip_expenses(trip_id, date);
     """,
+    # 3: bookings the user deleted, so a later re-read of the same mail does not bring them back
+    """
+    CREATE TABLE deleted_segments (
+      key TEXT PRIMARY KEY,
+      kind TEXT NOT NULL DEFAULT '',
+      label TEXT NOT NULL DEFAULT '',
+      message_ids TEXT NOT NULL DEFAULT '[]',
+      ts REAL NOT NULL
+    );
+    """,
 ]
 
 

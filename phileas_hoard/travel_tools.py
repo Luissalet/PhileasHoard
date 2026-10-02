@@ -46,7 +46,8 @@ class TripUpdateArgs(BaseModel):
     split_title: str = Field("", max_length=120, description="Title for the trip created by split_segments.")
     move_segment: Optional[str] = Field(None, max_length=60, description="Segment id to move.")
     to_trip: str = Field("", max_length=120, description="With move_segment: target trip id or title, 'new' for a trip of its own, or empty to let the grouping place it again.")
-    delete: bool = Field(False, description="Delete the trip (its segments stay and are regrouped); needs confirm=true.")
+    delete: bool = Field(False, description="Delete the trip AND its bookings (they are remembered as deleted, so reading the same mail again does not bring them back); needs confirm=true.")
+    keep_segments: bool = Field(False, description="With delete: keep the bookings instead, detached and marked 'no trip' (the grouping leaves them alone).")
     confirm: bool = False
 
 
@@ -202,7 +203,7 @@ def run_update(svc: Services, a: TripUpdateArgs) -> dict[str, Any]:
     done: list[str] = []
     if a.delete:
         _confirm(a.confirm, f"trip {trip.get('title')}")
-        out = tv.delete_trip(trip["id"])
+        out = tv.delete_trip(trip["id"], keep_segments=a.keep_segments)
         return {**out, "done": ["deleted"]}
     if a.merge_from:
         other = tv.t.find_trip(a.merge_from)
@@ -347,7 +348,7 @@ TRAVEL_TOOLS: list[Tool] = [
          TripCreateArgs, _ann(False), run_create),
     Tool("trip_update", "Rename, mute, cancel, merge, split a trip or move a segment between trips. Editar un viaje.\n"
          "merge_from (confirm=true) merges another trip into this one; split_segments moves some segments into a new trip; move_segment + to_trip "
-         "moves one segment ('new' = its own trip, empty = let the grouping place it); delete (confirm=true) removes the trip but keeps its segments. "
+         "moves one segment ('new' = its own trip, empty = let the grouping place it); delete (confirm=true) removes the trip and its bookings (keep_segments=true keeps them without a trip). "
          + SIN + " renombrar viaje, unir viajes, separar viaje, mover vuelo a otro viaje, silenciar avisos del viaje.", TripUpdateArgs,
          _ann(False, destructive=True, idempotent=False), run_update),
     Tool("segment_add", "Add a flight, train, bus, ferry, car rental, stay or activity by hand. Añadir un tramo o reserva.\n"
