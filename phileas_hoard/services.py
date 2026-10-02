@@ -43,6 +43,7 @@ UI_SETTINGS: dict[str, Optional[tuple[str, ...]]] = {
     "mail.interval_min": None,
     "mail.window_days": None,
     "mail.first_days": None,
+    "mail.history_days": None,
     "mail.faustus_dir": None,
     "mail.faustus_owner": None,
     "carriers.web_pages": ("1", "0"),
@@ -71,9 +72,9 @@ UI_SETTINGS: dict[str, Optional[tuple[str, ...]]] = {
 }
 GATE_VERSION = "2"          # bump to run the review-list clean-up again after the travel gate changes
 DEFAULTS = {"ui.language": "es", "scheduler.paused": "0", "mail.enabled": "1", "mail.interval_min": "10", "mail.window_days": "14",
-            "mail.first_days": "120", "carriers.web_pages": "1", "eta.region": "ES-MD", "archive.after_days": "5",
+            "mail.first_days": "120", "mail.history_days": "30", "carriers.web_pages": "1", "eta.region": "ES-MD", "archive.after_days": "5",
             "checks.night_from": "23", "checks.night_to": "7", "notify.ntfy.server": "https://ntfy.sh", "notify.email.backend": "auto", **TRAVEL_DEFAULTS}
-NUMERIC = {"travel.gap_days": (0, 14), "travel.departure_hours": (1, 24), "travel.tomorrow_hour": (0, 23), "travel.docs_days": (1, 365), "mail.interval_min": (2, 1440), "mail.window_days": (1, 365), "mail.first_days": (1, 730), "archive.after_days": (0, 365),
+NUMERIC = {"travel.gap_days": (0, 14), "travel.departure_hours": (1, 24), "travel.tomorrow_hour": (0, 23), "travel.docs_days": (1, 365), "mail.interval_min": (2, 1440), "mail.window_days": (1, 365), "mail.first_days": (1, 730), "mail.history_days": (1, 3650), "archive.after_days": (0, 365),
            "checks.night_from": (0, 24), "checks.night_to": (0, 24)}
 
 
@@ -139,6 +140,14 @@ class Services:
                 self.db.set_setting("travel.review_gate", GATE_VERSION)
         except Exception:  # noqa: BLE001
             log.exception("travel review clean-up failed")
+        try:
+            if self.db.get_setting("housekeeping.history_repair", "") != "1":
+                done = self.engine.history_repair(dry_run=False)
+                self.db.set_setting("housekeeping.history_repair", "1")
+                if done["count"]:
+                    log.info("moved %s old parcels to the history", done["count"])
+        except Exception:  # noqa: BLE001
+            log.exception("history repair failed")
 
     # ------------------------------------------------------------------ lifecycle
     def start(self) -> None:

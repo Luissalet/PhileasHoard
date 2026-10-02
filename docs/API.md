@@ -145,6 +145,18 @@ Annotations: idempotentHint, openWorldHint.
 | `since_days` (integer/null) | no | How far back to read (default: the configured window). |
 | `query` (string) | no | Optional search, e.g. a shop name or a tracking number. |
 
+## `shipments_history_repair`
+
+Move old stuck parcels to the history (dry run first). Limpiar envíos antiguos del listado activo.
+
+Parcels whose newest mail, carrier event and change are older than mail.history_days (default 30) and that are not delivered or archived go to the history quietly. dry_run=true (default) only lists them. Sinónimos: envíos viejos activos, limpiar historial, reparar envíos.
+
+Annotations: idempotentHint.
+
+| Argument | Required | Description |
+|---|---|---|
+| `dry_run` (boolean) | no | Only report what would move to the history (default). Pass false to do it. |
+
 ## `mail_list`
 
 Mails Phileas read: to review (maybe), shipping, noise. Correos leídos y dudosos.

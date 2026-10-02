@@ -41,7 +41,11 @@ NOISE_SENDERS = ("just-eat", "justeat", "glovo", "ubereats", "deliveroo", "mcdon
                  "tacobell", "kfc", "linkedin.com", "unir.net", "googleplay-noreply", "digital-no-reply@amazon", "no-reply@amazon.es",
                  "novedades@amazon", "store-news@amazon", "newsletter", "deals.aliexpress", "selections.aliexpress", "info@nl.mail",
                  "microsoft-noreply", "steampowered", "playstation", "nintendo", "epicgames", "spotify", "netflix", "noreply@youtube",
-                 "talent", "jobs-noreply", "sales.alibaba", "alibaba.com", "invitations@linkedin", "zendesk.com", "business.amazon")
+                 "talent", "jobs-noreply", "sales.alibaba", "alibaba.com", "invitations@linkedin", "zendesk.com", "business.amazon",
+                 # surplus-food and meal apps and food-delivery platforms: their "orders" are meals, not parcels
+                 "toogoodtogo", "tgtg", "olioex", "phenixapp", "hellofresh", "gousto", "wolt.com", "rappi", "foodpanda", "lieferando",
+                 "takeaway.com", "grubhub", "doordash", "thefork")
+NOISE_NAMES = ("too good to go", "toogoodtogo", "hellofresh", "glovo", "just eat", "uber eats", "deliveroo", "wolt")
 NOISE_SUBJECT = re.compile(
     r"\b(ofertas?|descuentos?|cup[oó]n|rebajas|-\d{2}%|newsletter|suscr[ií]bete|webinar|factura electr[oó]nica|recibo de tu pedido de google play|"
     r"cumple tus expectativas|da tu opini[oó]n|valora|rese[ñn]a|solicitud|candidatura|proceso de selecci[oó]n|regalo fue enviado|"
@@ -331,9 +335,17 @@ def find_pickup(text: str, ref: date) -> tuple[str, str, str]:
     return code, place, deadline
 
 
+_PRICE_IN_LINE = re.compile(r"[€$£]\s*\d|\d\s*[€$£]|\d[.,]\d{2}\s*(?:eur|euros?|usd|gbp)\b|=\s*\d|\bx\s*\d+\s*[=:]", re.I)
+
+
+def has_price(line: str) -> bool:
+    """A line that states an amount ("Familiar = € 10.00", "12,50 €") is a price, never the name of the item."""
+    return bool(_PRICE_IN_LINE.search(line or ""))
+
+
 def find_item(subject: str, text: str, merchant: str) -> str:
     m = re.search(r"[\"“«]([^\"”»]{3,80})[\"”»]", subject or "")
-    if m:
+    if m and not has_price(m.group(1)):
         item = m.group(1).strip().rstrip(".").rstrip("…").strip()
         more = re.search(r"y (\d+) productos? m[aá]s", subject or "", re.I)
         return item + (f" (+{more.group(1)})" if more else "")
@@ -345,11 +357,11 @@ def find_item(subject: str, text: str, merchant: str) -> str:
         for line in reversed(lines[max(0, i - 3):i]):
             if re.search(r"n[uú]mero de id|imei|cantidad|quantity|^id\b", line, re.I) or not re.search(r"[A-Za-zÀ-ÿ]{3}", line):
                 continue
-            if 6 <= len(line) <= 90 and not re.search(r"total|env[ií]o|protecci|precio|price|subtotal|iva", line, re.I):
+            if 6 <= len(line) <= 90 and not has_price(line) and not re.search(r"total|env[ií]o|protecci|precio|price|subtotal|iva", line, re.I):
                 return line
             break
     m = re.search(r"items in this shipment\s*-+\s*\n+(.+)", text or "", re.I)
-    if m:
+    if m and not has_price(m.group(1)):
         return m.group(1).strip()[:90]
     return ""
 
@@ -419,7 +431,7 @@ def analyze(message: dict[str, Any]) -> MailFacts:
     facts.carrier_sender = bool(carrier_sender)
     score, reasons = 0, []
 
-    noise = next((n for n in NOISE_SENDERS if n in address), "")
+    noise = next((n for n in NOISE_SENDERS if n in address), "") or next((n for n in NOISE_NAMES if n in _fold(str(message.get("from_name") or ""))), "")
     if noise:
         score -= 10
         reasons.append(f"sender looks like {noise}")

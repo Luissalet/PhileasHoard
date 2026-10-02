@@ -108,6 +108,7 @@ class Engine:
         """Analyze and file messages, oldest first so statuses build up in order."""
         out = {"shipping": 0, "maybe": 0, "noise": 0, "created": 0, "linked": 0, "shipments": [], "travel": 0, "trips": []}
         known = set(self.store.known_message_ids(20000))
+        quiet_ids: set[str] = set()
         if self.travel is not None:
             self.travel.begin_batch()
         for message in sorted(messages, key=lambda m: m.get("ts") or 0):
@@ -130,7 +131,11 @@ class Engine:
             out[facts.kind] += 1
             sid, created = None, False
             if facts.kind == "shipping":
-                sid, created = self._file(message, facts, bootstrap=bootstrap)
+                old_mail = bootstrap or self._older_than_live(message)
+                sid, created = self._file(message, facts, bootstrap=old_mail)
+                if sid and old_mail and not bootstrap:
+                    quiet_ids.add(sid)
+                    self._settle_if_stale(sid)               # an old mail found by a deep scan never makes an active parcel
                 if sid:
                     out["created" if created else "linked"] += 1
                     if sid not in out["shipments"]:
@@ -143,7 +148,7 @@ class Engine:
             out["trips"] = self.travel.existing_trips(out["trips"])
         for sid in out["shipments"]:
             try:
-                self.recompute_eta(sid, quiet=bootstrap)
+                self.recompute_eta(sid, quiet=bootstrap or sid in quiet_ids)
             except Exception:  # noqa: BLE001
                 log.exception("eta failed for %s", sid)
         return out
@@ -302,6 +307,70 @@ class Engine:
         word = "pedido" if self.lang() == "es" else "order"
         return f"{merchant} · {word} {order_ref}".strip(" ·")
 
+    def history_days(self) -> int:
+        try:
+            return max(1, int(float(self.setting("mail.history_days", "30"))))
+        except ValueError:
+            return 30
+
+    def _older_than_live(self, message: dict[str, Any]) -> bool:
+        """A mail dated before the live window (``mail.history_days``) only ever feeds the history, however it was fetched."""
+        ts = message.get("ts")
+        return bool(ts) and (self.clock() - float(ts)) > self.history_days() * DAY
+
+    def activity_ts(self, s: dict[str, Any]) -> float:
+        """The newest sign of life of a parcel: the newest carrier or mail event and the newest mail about it. When it has neither, its last
+        change. Bookkeeping times (when it was created, last checked or last re-evaluated) say nothing about the parcel itself."""
+        times = [e.get("ts") or 0 for e in self.store.events(s["id"], limit=1)]
+        times.extend(m.get("ts") or 0 for m in self.store.mails(shipment_id=s["id"], limit=1))
+        found = [x for x in times if x]
+        if found:
+            return float(max(found))
+        return float(s.get("last_change_ts") or s.get("created_ts") or 0)
+
+    def _settle(self, s: dict[str, Any]) -> str:
+        """Move one parcel to the history quietly: delivered (assumed) when it was out for delivery, archived otherwise."""
+        updates: dict[str, Any] = {"history_only": True}
+        action = "history"
+        if s["status"] not in FINAL:
+            if s.get("out_for_delivery_ts") or s["status"] == AVAILABLE_FOR_PICKUP:
+                updates.update(status=DELIVERED, delivered_ts=s.get("out_for_delivery_ts") or s.get("status_ts"), delivered_assumed=True,
+                               status_text="Entrega supuesta (sin noticias después del reparto)")
+                action = "history, delivered (assumed)"
+            else:
+                updates["archived"] = True
+                action = "history, archived"
+        updates["next_check_ts"] = None
+        self.store.update_shipment(s["id"], **updates)
+        self.recompute_eta(s["id"], quiet=True)
+        return action
+
+    def _settle_if_stale(self, sid: str) -> None:
+        s = self.store.shipment(sid)
+        if not s.get("history_only") or s.get("archived") or s["status"] in FINAL:
+            return
+        if self.clock() - self.activity_ts(s) > self.history_days() * DAY:
+            self._settle(s)
+
+    def history_repair(self, *, dry_run: bool = True) -> dict[str, Any]:
+        """Apply the live-window rule to existing parcels: every parcel that is neither delivered nor archived and whose newest mail, carrier
+        event and change are all older than ``mail.history_days`` moves to the history, quietly. ``dry_run`` only reports."""
+        now = self.clock()
+        window = self.history_days() * DAY
+        changes = []
+        for s in self.store.shipments(archived=False, history_only=False, active=True, limit=2000):
+            if s.get("source") not in ("mail", "", None):
+                continue                                                   # a parcel added by hand is the user's, never settled for them
+            last = self.activity_ts(s)
+            if now - last <= window:
+                continue
+            will = "history, delivered (assumed)" if (s.get("out_for_delivery_ts") or s["status"] == AVAILABLE_FOR_PICKUP) else "history, archived"
+            changes.append({"id": s["id"], "label": s.get("label") or "", "carrier": s.get("carrier") or "", "status": s["status"],
+                            "last_activity": datetime.fromtimestamp(last).date().isoformat(), "days_idle": int((now - last) // DAY), "action": will})
+            if not dry_run:
+                self._settle(s)
+        return {"dry_run": dry_run, "window_days": self.history_days(), "count": len(changes), "shipments": changes}
+
     def finish_bootstrap(self) -> None:
         """After the first import: settle old parcels so they feed the history instead of waiting for news forever."""
         now = self.clock()
@@ -312,15 +381,7 @@ class Engine:
                 if s.get("history_only"):
                     self.store.update_shipment(s["id"], history_only=False)
                 continue
-            updates: dict[str, Any] = {"history_only": True}
-            if s["status"] not in FINAL:
-                if s.get("out_for_delivery_ts") or s["status"] == AVAILABLE_FOR_PICKUP:
-                    updates.update(status=DELIVERED, delivered_ts=s.get("out_for_delivery_ts") or s.get("status_ts"), delivered_assumed=True,
-                                   status_text="Entrega supuesta (sin noticias después del reparto)")
-                else:
-                    updates["archived"] = True
-            self.store.update_shipment(s["id"], **updates)
-            self.recompute_eta(s["id"], quiet=True)
+            self._settle(s)
 
     # ================================================================== status
     def apply_status(self, sid: str, status: str, ts: float, *, source: str, text: str = "", quiet: bool = False) -> bool:

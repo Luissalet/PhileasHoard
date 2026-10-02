@@ -138,6 +138,10 @@ class ScanArgs(BaseModel):
     query: str = Field("", max_length=200, description="Optional search, e.g. a shop name or a tracking number.")
 
 
+class HistoryRepairArgs(BaseModel):
+    dry_run: bool = Field(True, description="Only report what would move to the history (default). Pass false to do it.")
+
+
 class MailListArgs(BaseModel):
     kind: Literal["maybe", "shipping", "noise", "travel", "all"] = "maybe"
     state: Literal["new", "linked", "ignored", "skipped", "all"] = "all"
@@ -265,6 +269,10 @@ def run_scan(svc: Services, a: ScanArgs) -> dict[str, Any]:
     return result if isinstance(result, dict) else {"result": result}
 
 
+def run_history_repair(svc: Services, a: HistoryRepairArgs) -> dict[str, Any]:
+    return svc.engine.history_repair(dry_run=a.dry_run)
+
+
 def run_mail_list(svc: Services, a: MailListArgs) -> dict[str, Any]:
     rows = svc.store.mails(kind=None if a.kind == "all" else [a.kind], state=None if a.state == "all" else [a.state], limit=a.limit)
     slim = [{**{k: m.get(k) for k in ("message_id", "ts", "from_address", "subject", "kind", "score", "state", "shipment_id", "snippet")},
@@ -390,6 +398,10 @@ TOOLS: list[Tool] = [
          "Sinónimos: cuándo llega, por qué esa fecha, envíos parecidos, retraso.", ShipmentRef, _ann(True), run_eta),
     Tool("mail_scan", "Read new shipping mail now (or search back N days / a query). Leer el correo ya.\n"
          "Sinónimos: revisa el correo, busca el correo de la tienda, importar pedidos.", ScanArgs, _ann(False, idempotent=True, open_world=True), run_scan),
+    Tool("shipments_history_repair", "Move old stuck parcels to the history (dry run first). Limpiar envíos antiguos del listado activo.\n"
+         "Parcels whose newest mail, carrier event and change are older than mail.history_days (default 30) and that are not delivered or archived "
+         "go to the history quietly. dry_run=true (default) only lists them. Sinónimos: envíos viejos activos, limpiar historial, reparar envíos.",
+         HistoryRepairArgs, _ann(False, idempotent=True), run_history_repair),
     Tool("mail_list", "Mails Phileas read: to review (maybe), shipping, noise. Correos leídos y dudosos.",
          MailListArgs, _ann(True), run_mail_list),
     Tool("mail_accept", "Turn a doubtful mail into a shipment update. Aceptar correo dudoso como envío.",
