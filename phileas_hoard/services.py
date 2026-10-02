@@ -20,7 +20,7 @@ from .db import Database
 from .engine import Engine
 from .errors import PhileasError
 from .hoard_link.tokens import read_or_create_token, write_url
-from .mail.source import SOURCE_MODES, FaustusMail, MailSource
+from .mail.source import SOURCE_MODES, MailSource
 from .model import (ACTIVE, AVAILABLE_FOR_PICKUP, DELIVERED, EXCEPTION, FAILED_ATTEMPT, FINAL, OUT_FOR_DELIVERY, RETURNED, STATUSES,
                     UNKNOWN, label as status_label, progress)
 from .notify import CHANNELS, EMAIL_BACKENDS, VIA_MODES, Notifier
@@ -96,8 +96,8 @@ class Services:
         self.store = Store(self.db, clock_fn)
         self._load_secrets()
         self.notifier = notifier or Notifier(config, self.db.get_setting, clock=clock_fn)
-        self.mail = mail_source or MailSource(FaustusMail(self.setting, config.secret, runner=mail_runner, clock=clock_fn), self.db.get_setting,
-                                              self.db.set_setting, clock=clock_fn)
+        self.mail = mail_source or MailSource(self.notifier, self.db.get_setting, self.db.set_setting, process_runner=mail_runner,
+                                              secret=config.secret, clock=clock_fn)
         self.carriers = Carriers(config, config.secret, transport=http_transport, browser=browser, setting=self.setting)
         self.tstore = TravelStore(self.db, clock_fn)
         self.travel = Travel(self.store, self.tstore, self.notifier, setting=self.setting, set_setting=self.db.set_setting, emit=self._emit, clock=clock_fn,

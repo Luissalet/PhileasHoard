@@ -1,119 +1,90 @@
-"""Run ``faustus_mail.py`` with Faustus's Python so the mail password never leaves Faustus.
+"""Where the engine's mail comes from: the family hub's mail gateway when it is ready, Faustus's own helper otherwise.
 
-The Faustus folder comes from the ``mail.faustus_dir`` setting, ``PHILEAS_FAUSTUS_DIR`` / ``FAUSTUS_DIR``, or a
-``faustus`` folder next to this app. ``mail.faustus_owner`` picks the Faustus user when several have accounts.
+Both halves are the commons': ``hoard_link.fam_mail.MailRouter`` chooses the source (``mail.source``: ``auto``, ``hub`` or
+``faustus``), registers Phileas's interest at the hub, keeps the watermark and claims what Phileas filed, and ``FaustusHelper`` runs
+the vendored ``mail_helper.py`` under Faustus's own Python so the mail password never reaches Phileas. This class only holds what is
+Phileas's: the subject words that shipping (and, with the travel facet on, booking) mail carries, the sender domains registered at the
+hub, and the shape of the answers the engine expects. The mailbox is read-only on the other side (the helper opens folders with
+EXAMINE and fetches with BODY.PEEK); the only write action is the notification mail of the notifier.
+
+Messages that carry schema.org reservation markup arrive with their raw ``html`` (the helper adds it by itself; from the hub it is
+asked for with ``fields=["html"]``), which the travel facet reads.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
-import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from ..config import REPO_ROOT
+from ..hoard_link.fam_mail import FaustusHelper, MailRouter
 
-HELPER = Path(__file__).with_name("faustus_mail.py")
-TIMEOUT_S = 180
-STATUS_TTL_S = 300.0
-
-
-class FaustusMail:
-    def __init__(self, setting: Callable[[str, str], str], secret: Callable[[str], str], *,
-                 runner: Optional[Callable[..., Any]] = None, clock: Callable[[], float] = time.time):
-        self.setting = setting
-        self.secret = secret
-        self.runner = runner or subprocess.run
-        self.clock = clock
-        self._status: Optional[tuple[float, str, dict[str, Any]]] = None
-
-    def faustus_dir(self) -> Optional[Path]:
-        raw = [self.setting("mail.faustus_dir", ""), self.secret("FAUSTUS_DIR"), os.environ.get("FAUSTUS_DIR", "")]
-        candidates = [Path(r).expanduser() for r in raw if r and r.strip()]
-        if not any(r and r.strip() for r in raw):
-            candidates += [REPO_ROOT.parent / "faustus", REPO_ROOT.parent.parent / "faustus"]
-        for path in candidates:
-            try:
-                if (path / "mcp_servers" / "email_server.py").is_file():
-                    return path.resolve()
-            except OSError:
-                continue
-        return None
-
-    @staticmethod
-    def python_of(root: Path) -> Optional[str]:
-        for rel in ("venv/Scripts/python.exe", ".venv/Scripts/python.exe", "venv/bin/python", ".venv/bin/python"):
-            if (root / rel).is_file():
-                return str(root / rel)
-        return None
-
-    def call(self, request: dict[str, Any], timeout: float = TIMEOUT_S) -> dict[str, Any]:
-        root = self.faustus_dir()
-        if root is None:
-            return {"ok": False, "error": "Faustus folder not found (set it in Settings → Mail)"}
-        python = self.python_of(root)
-        if python is None:
-            return {"ok": False, "error": "Faustus has no venv with Python"}
-        owner = self.setting("mail.faustus_owner", "")
-        if owner:
-            request = {**request, "owner": owner}
-        env = {k: v for k, v in os.environ.items() if not k.startswith("PHILEAS_")}
-        env["PYTHONIOENCODING"] = "utf-8"
-        try:
-            done = self.runner([python, str(HELPER), str(root)], input=json.dumps(request), capture_output=True, text=True,
-                               encoding="utf-8", timeout=timeout, cwd=str(root), env=env,
-                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        except subprocess.TimeoutExpired:
-            return {"ok": False, "error": "the mail read took too long"}
-        except (OSError, subprocess.SubprocessError) as exc:
-            return {"ok": False, "error": f"mail helper: {type(exc).__name__}"}
-        lines = [line for line in (getattr(done, "stdout", "") or "").splitlines() if line.strip().startswith("{")]
-        try:
-            answer = json.loads(lines[-1]) if lines else {}
-        except ValueError:
-            answer = {}
-        if not isinstance(answer, dict) or "ok" not in answer:
-            return {"ok": False, "error": f"mail helper exit {getattr(done, 'returncode', '?')}"}
-        return answer
-
-    def status(self, refresh: bool = False) -> dict[str, Any]:
-        key = str(self.faustus_dir() or "") + "|" + self.setting("mail.faustus_owner", "")
-        cached = self._status
-        if cached and not refresh and cached[1] == key and self.clock() - cached[0] < (STATUS_TTL_S if cached[2].get("ok") else 30):
-            return cached[2]
-        answer = self.call({"action": "status"}, timeout=60)
-        answer["faustus_dir"] = str(self.faustus_dir() or "")
-        self._status = (self.clock(), key, answer)
-        return answer
-
-    def scan(self, *, since_days: int, limit: int, skip: list[str], query: str = "", travel: bool = False, deep: bool = False) -> dict[str, Any]:
-        """``deep`` only matters to :class:`MailSource`; this reader always searches the whole window."""
-        return self.call({"action": "scan", "since_days": since_days, "max": limit, "skip": skip, "query": query, "travel": travel})
-
-
-# ====================================================================== the family hub's mail gateway (pattern 2)
-SOURCE_MODES = ("auto", "hub", "faustus")      # mail.source: the hub's mail gateway, Faustus's own helper, or the hub with a fallback
+SOURCE_MODES = ("auto", "hub", "faustus")      # mail.source: the family hub's mail gateway, Faustus's own helper, or the hub with a fallback
 HUB_PAGE_MAX = 500
 HUB_MAX_PAGES = 6                               # pages read in one scan: a long backlog is finished by the next scans
 WATERMARK_KEY = "mail.hub.since_id"             # the hub's message id up to which Phileas has read
+HUB_FIELDS = ["html", "images"]                 # what the gateway adds on request: reservation markup (travel) and image alt texts
+SCAN_TIMEOUT_S = 180
 CARRIER_DOMAINS_EXTRA = ("paack.co", "correosexpress.com", "zeleris.com", "cainiao.com", "dpd.com", "dpd.es", "fedex.com", "tnt.com", "postnl.nl")
+
+# Words that shipping mail carries in its subject (ES, EN, FR, DE, IT, PT, NL).
+SUBJECT_TERMS = [
+    "enviado", "envío", "envio", "seguimiento", "pedido", "entrega", "reparto", "paquete", "recogida", "en camino",
+    "shipped", "shipment", "tracking", "delivery", "delivered", "dispatched", "order", "parcel", "on its way", "out for",
+    "expédié", "livraison", "colis", "versandt", "sendung", "lieferung", "spedito", "spedizione", "consegna",
+    "enviada", "encomenda", "verzonden", "bezorging",
+]
+# Words that booking mail carries in its subject (ES, EN, FR, DE, IT, PT). Added when the travel facet is on.
+TRAVEL_TERMS = [
+    "reserva", "reservation", "booking", "billete", "ticket", "vuelo", "flight", "tarjeta de embarque", "boarding pass", "check-in",
+    "itinerario", "itinerary", "localizador", "confirmación", "confirmation", "e-ticket", "viaje", "tren", "autobús", "ferry",
+    "hotel", "alojamiento", "alquiler de coche", "car rental", "cancelación", "cancelled", "billet", "réservation", "buchung", "prenotazione",
+    "voo", "bilhete",
+]
+GMAIL_QUERY = ("seguimiento OR enviado OR envío OR \"en camino\" OR reparto OR entrega OR paquete OR tracking OR shipped "
+               "OR shipment OR dispatched OR \"out for delivery\" OR delivered OR expédié OR versandt OR spedito "
+               "OR 1Z OR \"número de seguimiento\" OR \"tracking number\"")
+TRAVEL_GMAIL = ("OR reserva OR reservation OR booking OR billete OR itinerary OR itinerario OR localizador OR \"tarjeta de embarque\" "
+                "OR \"boarding pass\" OR vuelo OR flight OR hotel OR e-ticket")
+
+
+class _RunnerHelper:
+    """A helper that answers through ``runner(request, timeout) -> dict`` (tests use a fake mailbox)."""
+
+    def __init__(self, runner: Callable[[dict[str, Any], int], dict[str, Any]]):
+        self.runner = runner
+
+    def available(self) -> bool:
+        return True
+
+    def faustus_dir(self) -> Optional[Path]:
+        return None
+
+    def run(self, action: str, payload: Optional[dict[str, Any]] = None, timeout: float = 0) -> dict[str, Any]:
+        return self.runner({**(payload or {}), "action": action}, int(timeout))
+
+    def status(self, refresh: bool = False) -> dict[str, Any]:
+        return self.run("status", None, 60)
 
 
 def interest_spec(travel: bool) -> dict[str, Any]:
-    """What Phileas reads today, as a hub interest: the subject words shipping mail carries (plus booking words when the travel facet is
-    on) and the sender domains of the shops and carriers it knows."""
-    from .faustus_mail import SUBJECT_TERMS, TRAVEL_TERMS
+    """What Phileas reads, as a hub interest: the subject words shipping mail carries (plus booking words when the travel facet is on) and
+    the sender domains of the shops and carriers it knows."""
     from .parse import CARRIER_SENDERS, MERCHANTS
     domains = sorted({*MERCHANTS, *CARRIER_SENDERS, *CARRIER_DOMAINS_EXTRA})
     return {"subject_terms": list(SUBJECT_TERMS) + (list(TRAVEL_TERMS) if travel else []), "from_domains": domains}
 
 
+def _normalise(message: dict[str, Any]) -> dict[str, Any]:
+    """The shape the parser reads: lower-case ``from_address``, ``text`` and ``links`` always present."""
+    message["from_address"] = str(message.get("from_address") or message.get("from_addr") or "").lower()
+    message.setdefault("links", [])
+    message.setdefault("text", "")
+    return message
+
+
 class MailSource:
-    """Where the engine's mail comes from: the family hub's mail gateway when it is ready (``mail.source`` = ``auto`` | ``hub``), Faustus's own
-    helper otherwise (``faustus``, or ``auto`` when the hub is away). The messages reach the SAME parsing code either way.
+    """Where the engine's mail comes from (see the module docstring); the messages reach the SAME parsing code either way.
 
     * a normal scan reads the hub from a stored watermark (``mail.hub.since_id``), oldest first, and only mail that matches the interest
       registered by :func:`interest_spec`; the watermark moves when the engine has stored the messages (:meth:`commit`);
@@ -121,135 +92,82 @@ class MailSource:
       stored); in ``hub`` it re-reads the hub's stored mail from the start, filtered by the query, without touching the watermark;
     * after the engine files a message, :meth:`claim` tells the hub "this mail is mine" (a hint, never an error).
 
-    ``hub_mail`` is injectable: an object with ``available/register_interest/messages/claim`` (default: ``hoard_link.fam_mail``)."""
+    ``helper`` (anything with ``available/faustus_dir/run/status``) or ``runner(request, timeout) -> dict`` are injectable (a fake mailbox); ``process_runner`` replaces ``subprocess.run`` under the helper;
+    ``notifier`` (when it has a ``helper``) shares its helper, so the notifier and the mail scan share one status cache."""
 
-    def __init__(self, own: Any, settings_get: Callable[[str, Optional[str]], Optional[str]], settings_set: Callable[[str, str], None], *,
-                 hub_mail: Any = None, clock: Callable[[], float] = time.time):
-        self.own = own
-        self.get = settings_get
-        self.put = settings_set
+    def __init__(self, notifier: Any = None, settings_get: Optional[Callable[[str, Optional[str]], Optional[str]]] = None,
+                 settings_set: Optional[Callable[[str, str], None]] = None, *, runner: Optional[Callable[[dict[str, Any], int], dict[str, Any]]] = None,
+                 process_runner: Optional[Callable[..., Any]] = None, hub_mail: Any = None, secret: Optional[Callable[[str], str]] = None,
+                 helper: Any = None, clock: Callable[[], float] = time.time):
+        self.get = settings_get or (lambda key, default=None: default)
+        self.put = settings_set or (lambda key, value: None)
         self.clock = clock
-        self._hub_mail = hub_mail
-        self._registered: Optional[str] = None
-        self._pending_since: Optional[int] = None
-        self._lock = threading.Lock()
+        self._secret = secret or (lambda name: "")
+        if helper is not None:
+            self.helper: Any = helper
+        elif runner is not None:
+            self.helper = _RunnerHelper(runner)
+        elif notifier is not None and getattr(notifier, "helper", None) is not None and process_runner is None:
+            self.helper = notifier.helper
+        else:
+            self.helper = FaustusHelper(lambda: self.get("mail.faustus_dir", None) or self._secret("FAUSTUS_DIR"),
+                                        owner=lambda: self.get("mail.faustus_owner", None), runner=process_runner,
+                                        env_drop_prefixes=("PHILEAS_",), ask_hub=False, clock=clock)
+        self._travel = False
+        self.router = MailRouter(self.helper, source_getter=self.source_setting, interest=lambda criteria: interest_spec(self._travel),
+                                 claim_kind="shipment", watermark_get=lambda: int(self.get(WATERMARK_KEY, "0") or 0),
+                                 watermark_set=lambda value: self.put(WATERMARK_KEY, str(value)), page=HUB_PAGE_MAX, max_pages=HUB_MAX_PAGES,
+                                 hub=hub_mail, clock=clock, deep_uses_helper=True)
 
     # ------------------------------------------------------------------ the pieces the engine and the API already use
     def faustus_dir(self) -> Optional[Path]:
-        return self.own.faustus_dir()
+        return self.helper.faustus_dir()
 
     def status(self, refresh: bool = False) -> dict[str, Any]:
-        answer = dict(self.own.status(refresh=refresh))
+        answer = dict(self.helper.status(refresh=refresh))
         answer["source"] = self.source_status()
         return answer
 
-    # ------------------------------------------------------------------ the hub
-    @property
-    def hub(self) -> Any:
-        if self._hub_mail is None:
-            from ..hoard_link import fam_mail
-            self._hub_mail = fam_mail
-        return self._hub_mail
-
+    # ------------------------------------------------------------------ the family hub's mail gateway
     def source_setting(self) -> str:
+        """``mail.source``: ``auto`` (hub when its gateway is ready, else Faustus's helper), ``hub`` (only the hub), ``faustus``."""
         value = str(self.get("mail.source", "auto") or "auto").strip().lower()
         return value if value in SOURCE_MODES else "auto"
 
     def hub_up(self) -> bool:
-        try:
-            return bool(self.hub.available())
-        except Exception:  # noqa: BLE001
-            return False
+        return self.router.hub_up()
 
     def source_status(self) -> dict[str, Any]:
-        setting = self.source_setting()
-        up = self.hub_up() if setting != "faustus" else False
-        return {"setting": setting, "effective": "hub" if (setting == "hub" or (setting == "auto" and up)) else "faustus", "hub_available": up,
-                "interest_registered": self._registered is not None, "hub_since_id": int(self.get(WATERMARK_KEY, "0") or 0)}
+        status = self.router.status()
+        return {"setting": status["setting"], "effective": status["effective"], "hub_available": status["hub_available"],
+                "interest_registered": status["interest_registered"], "hub_since_id": status["hub_since_id"]}
 
     def forget_interest(self) -> None:
-        with self._lock:
-            self._registered = None
+        self.router.forget_interest()
 
     def ensure_interest(self, travel: bool, *, force: bool = False) -> dict[str, Any]:
         """Tell the hub which mail Phileas wants. Once per process, and again when the travel facet is switched or ``force`` says so."""
-        spec = interest_spec(travel)
-        signature = f"{'t' if travel else 'p'}:{len(spec['subject_terms'])}:{len(spec['from_domains'])}"
-        with self._lock:
-            if not force and self._registered == signature:
-                return {"ok": True, "cached": True}
-        try:
-            answer = self.hub.register_interest(spec)
-        except Exception as exc:  # noqa: BLE001
-            return {"ok": False, "error": f"hub interest: {type(exc).__name__}"}
-        if isinstance(answer, dict) and answer.get("ok"):
-            with self._lock:
-                self._registered = signature
-            return {"ok": True}
-        return {"ok": False, "error": str((answer or {}).get("error") or "the hub refused the interest")[:200]}
-
-    def _scan_hub(self, days: int, limit: int, skip: list[str], query: str, travel: bool, deep: bool) -> dict[str, Any]:
-        registered = self.ensure_interest(travel)
-        if not registered.get("ok"):
-            return {"ok": False, "error": registered.get("error") or "hub interest failed", "accounts": [], "messages": [], "via": "hub"}
-        since = 0 if deep else int(self.get(WATERMARK_KEY, "0") or 0)
-        cutoff = self.clock() - int(days) * 86400
-        skipped = set(skip)
-        words = [w for w in query.lower().split() if w]
-        out: list[dict[str, Any]] = []
-        read = 0
-        last = since
-        more = False
-        for _ in range(HUB_MAX_PAGES):
-            page = self.hub.messages(since_id=last, limit=HUB_PAGE_MAX, full=True)
-            if not page.get("ok"):
-                if not read:
-                    return {"ok": False, "error": str(page.get("error") or "hub mail failed")[:200], "accounts": [], "messages": [], "via": "hub"}
-                break
-            raw = [m for m in page.get("messages") or [] if isinstance(m, dict)]
-            read += len(raw)
-            for m in raw:
-                ts = m.get("ts")
-                mid = str(m.get("message_id") or "")
-                if not mid or mid in skipped or (ts and float(ts) < cutoff):
-                    continue
-                if words:
-                    hay = f"{m.get('subject') or ''} {m.get('text') or ''} {m.get('from_address') or ''}".lower()
-                    if not all(w in hay for w in words):
-                        continue
-                out.append({"message_id": mid, "subject": m.get("subject") or "", "from_name": m.get("from_name") or "",
-                            "from_address": str(m.get("from_address") or m.get("from_addr") or "").lower(), "ts": ts,
-                            "text": m.get("text") or "", "links": m.get("links") or [], "account": "hub", "hub_id": m.get("id")})
-            last = int(page.get("last_id") or last)
-            more = len(raw) >= HUB_PAGE_MAX
-            if not more or len(out) >= limit:
-                break
-        out.sort(key=lambda m: m.get("ts") or 0, reverse=True)
-        self._pending_since = None if deep else last
-        return {"ok": True, "error": "", "accounts": [{"account": "hub", "matches": read, "new": len(out)}], "messages": out, "via": "hub",
-                "more": more}
-
-    def scan(self, *, since_days: int, limit: int, skip: list[str], query: str = "", travel: bool = False, deep: bool = False) -> dict[str, Any]:
-        mode = self.source_setting()
-        use_hub = mode == "hub" or (mode == "auto" and self.hub_up() and not (deep and self.own.faustus_dir() is not None))
-        if use_hub:
-            answer = self._scan_hub(since_days, limit, skip, query, travel, deep)
-            if answer.get("ok") or mode == "hub":
-                return answer
-            # auto: the hub could not give the mail this time, so Faustus's own helper reads it
-        return self.own.scan(since_days=since_days, limit=limit, skip=skip, query=query, travel=travel)
+        self._travel = bool(travel)
+        return self.router.ensure_interest({"subject_terms": interest_spec(travel)["subject_terms"]}, force=force)
 
     def commit(self) -> None:
         """Remember how far the hub's mail was read. The engine calls it once the messages of a scan are stored."""
-        pending, self._pending_since = self._pending_since, None
-        if pending is not None:
-            self.put(WATERMARK_KEY, str(pending))
+        self.router.commit()
 
     def claim(self, hub_id: Any, kind: str, ref: str) -> None:
         """Tell the hub "this mail is mine" so it leaves the unowned tray. Errors are ignored: claims are hints."""
         if hub_id in (None, ""):
             return
-        try:
-            self.hub.claim([int(hub_id)], kind, ref)
-        except Exception:  # noqa: BLE001
-            pass
+        self.router.claim({"hub_id": hub_id}, ref, kind=kind)
+
+    # ------------------------------------------------------------------ scanning
+    def scan(self, *, since_days: int, limit: int, skip: list[str], query: str = "", travel: bool = False, deep: bool = False) -> dict[str, Any]:
+        """``{ok, error, accounts, messages, via: "hub" | "faustus", more}``; a hub that cannot answer falls back to the helper in ``auto``."""
+        self._travel = bool(travel)
+        terms = interest_spec(travel)["subject_terms"]
+        gmail = GMAIL_QUERY + (" " + TRAVEL_GMAIL if travel else "")
+        answer = self.router.scan_ex(since_days=int(since_days), limit=int(limit), skip=skip, query=query, deep=deep, fields=HUB_FIELDS,
+                                     subject_terms=terms, gmail_query=gmail)
+        return {"ok": bool(answer.get("ok")), "error": str(answer.get("error") or ""), "accounts": answer.get("accounts") or [],
+                "messages": [_normalise(m) for m in answer.get("messages") or [] if isinstance(m, dict)], "via": answer.get("source") or "",
+                "more": bool(answer.get("more"))}

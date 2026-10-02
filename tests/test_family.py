@@ -151,8 +151,9 @@ class FakeHubMail:
         self.interests.append(spec)
         return {"ok": True}
 
-    def messages(self, since_id=0, limit=100, full=True, interest=True, timeout=20.0):
+    def messages(self, since_id=0, limit=100, full=True, interest=True, timeout=20.0, fields=None):
         self.asked.append(since_id)
+        self.fields = fields
         rows = [r for r in self.rows if r["id"] > since_id][:limit]
         return {"ok": True, "messages": [dict(r) for r in rows], "last_id": rows[-1]["id"] if rows else since_id}
 
@@ -169,10 +170,13 @@ def hub_row(hub_id: int, base: dict) -> dict:
 
 
 class FakeOwn:
-    """Stands in for FaustusMail (the own helper)."""
+    """Stands in for the Faustus helper (``FaustusHelper``): answers ``scan`` and ``status`` from a fixed mailbox."""
 
     def __init__(self, messages=None, folder=None):
         self.messages, self.calls, self.folder = list(messages or []), [], folder
+
+    def available(self):
+        return self.folder is not None
 
     def faustus_dir(self):
         return self.folder
@@ -180,14 +184,16 @@ class FakeOwn:
     def status(self, refresh=False):
         return {"ok": True, "accounts": [{"account": "own"}]}
 
-    def scan(self, **kw):
-        self.calls.append(kw)
-        return {"ok": True, "accounts": [{"account": "own"}], "messages": list(self.messages)}
+    def run(self, action, payload=None, timeout=0):
+        assert action == "scan"
+        self.calls.append(payload or {})
+        return {"ok": True, "accounts": [{"account": "own"}], "messages": [dict(m) for m in self.messages]}
 
 
 def source(hub, own=None, sett=None, clock=lambda: M.T0):
     store = dict(sett or {})
-    src = MailSource(own or FakeOwn(), lambda k, d=None: store.get(k, d), lambda k, v: store.__setitem__(k, v), hub_mail=hub, clock=clock)
+    src = MailSource(None, lambda k, d=None: store.get(k, d), lambda k, v: store.__setitem__(k, v), helper=own or FakeOwn(folder=Path("/faustus")),
+                     hub_mail=hub, clock=clock)
     src.store = store
     return src
 
@@ -277,7 +283,7 @@ def test_status_reports_the_source():
 
 
 def build_hub(config, clock, hub, own=None, hub_sett=None):
-    src = MailSource(own or FakeOwn(), lambda k, d=None: None, lambda k, v: None, hub_mail=hub, clock=clock)
+    src = MailSource(None, lambda k, d=None: None, lambda k, v: None, helper=own or FakeOwn(), hub_mail=hub, clock=clock)
     svc = build(config, clock, src)
     src.get, src.put = svc.db.get_setting, svc.db.set_setting
     return svc

@@ -1,19 +1,13 @@
-"""The Faustus mail helper: HTML for reservation markup, and travel subjects in the search. Stdlib-only, loaded by path."""
+"""The shared Faustus mail helper: HTML for reservation markup, and the travel words Phileas adds to its search."""
 
 from __future__ import annotations
 
 import email
-import importlib.util
 import json
-from pathlib import Path
 
-from phileas_hoard.mail.source import FaustusMail
+from phileas_hoard.hoard_link import mail_helper as helper
+from phileas_hoard.mail.source import MailSource
 from phileas_hoard.travel import extract
-
-HELPER = Path(__file__).resolve().parent.parent / "phileas_hoard" / "mail" / "faustus_mail.py"
-spec = importlib.util.spec_from_file_location("faustus_mail_helper", HELPER)
-helper = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(helper)
 
 LD = json.dumps({"@context": "http://schema.org", "@type": "FlightReservation", "reservationNumber": "VKP3N7",
                  "reservationFor": {"@type": "Flight", "flightNumber": "123", "airline": {"@type": "Airline", "iataCode": "XX"},
@@ -41,46 +35,45 @@ def test_plain_html_is_not_shipped_back():
     assert "html" not in record
 
 
-class Conn:
-    def __init__(self):
-        self.searches: list[tuple] = []
+def scan_request(travel: bool) -> dict:
+    """The request the mail source sends to the helper for one scan."""
+    sent = {}
 
-    def uid(self, command, _charset, *criteria):
-        self.searches.append(criteria)
-        return "OK", [b""]
+    def runner(request, timeout):
+        sent.update(request)
+        return {"ok": True, "accounts": [], "messages": []}
+
+    MailSource(None, lambda k, d=None: "faustus" if k == "mail.source" else d, lambda k, v: None, runner=runner).scan(
+        since_days=5, limit=5, skip=[], travel=travel)
+    return sent
 
 
 def test_travel_terms_are_searched_only_when_asked():
-    plain, travel = Conn(), Conn()
-    helper._search(plain, "imap.example.test", 30, "")
-    helper._search(travel, "imap.example.test", 30, "", travel=True)
-    subjects = lambda c: {x[3].strip('"') for x in c.searches if len(x) > 3 and x[2] == "SUBJECT"}
-    assert "billete" not in subjects(plain) and "billete" in subjects(travel) and "enviado" in subjects(travel)
+    plain, travel = scan_request(False), scan_request(True)
+    assert plain["action"] == "scan" and "billete" not in plain["subject_terms"] and "enviado" in plain["subject_terms"]
+    assert "billete" in travel["subject_terms"] and "enviado" in travel["subject_terms"]
 
 
 def test_gmail_query_gets_the_travel_words():
-    seen = []
-
-    class G(Conn):
-        def uid(self, command, _charset, *criteria):
-            seen.append(criteria)
-            return "OK", [b"1"]
-    helper._search(G(), "imap.gmail.com", 30, "", travel=True)
-    assert "itinerary" in seen[0][1] and "tracking number" in seen[0][1] and seen[0][1].count("(") == seen[0][1].count(")")
+    plain, travel = scan_request(False), scan_request(True)
+    assert "itinerary" not in plain["gmail_query"] and "tracking number" in plain["gmail_query"]
+    assert "itinerary" in travel["gmail_query"] and travel["gmail_query"].count('"') % 2 == 0
 
 
-def test_source_passes_the_travel_flag():
-    sent = {}
+def test_hub_mail_is_asked_for_the_reservation_markup():
+    class Hub:
+        fields = None
 
-    class Done:
-        stdout, returncode = '{"ok": true, "messages": []}', 0
+        def available(self, timeout=1.0):
+            return True
 
-    def runner(cmd, input="", **kw):
-        sent.update(json.loads(input))
-        return Done()
-    root = Path(__file__).parent
-    src = FaustusMail(lambda k, d="": "", lambda k: "", runner=runner)
-    src.faustus_dir = lambda: root
-    src.python_of = staticmethod(lambda r: "python")
-    src.scan(since_days=5, limit=5, skip=[], travel=True)
-    assert sent["travel"] is True and sent["action"] == "scan"
+        def register_interest(self, spec, sphere=None, timeout=10.0):
+            return {"ok": True}
+
+        def messages(self, since_id=0, limit=100, full=True, interest=True, timeout=20.0, fields=None):
+            Hub.fields = fields
+            return {"ok": True, "messages": [], "last_id": since_id}
+
+    MailSource(None, lambda k, d=None: d, lambda k, v: None, runner=lambda r, t: {"ok": True, "messages": []}, hub_mail=Hub()).scan(
+        since_days=5, limit=5, skip=[], travel=True)
+    assert "html" in Hub.fields
