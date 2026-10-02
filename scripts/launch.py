@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from phileas_hoard.config import Config  # noqa: E402
-from phileas_hoard.port import find_available_port  # noqa: E402
+from phileas_hoard.hoard_link.net import find_available_port  # noqa: E402
 
 
 def main() -> int:

@@ -6,7 +6,7 @@ import pytest
 
 import travel_mails as tm
 from conftest import FakeHub, build, tool
-from phileas_hoard.errors import PhileasError
+from phileas_hoard.hoard_link.agentkit import AppError  # confirm_required comes from the commons' AppError
 
 
 @pytest.fixture
@@ -27,7 +27,7 @@ def test_delete_removes_the_trip_and_its_bookings_for_good(svc2):
     svc2.engine.ingest([tm.IBERIA])
     trip = only_trip(svc2)
     assert len(svc2.tstore.segments()) == 2
-    with pytest.raises(PhileasError):
+    with pytest.raises(AppError):
         tool(svc2, "trip_update", trip=trip["id"], delete=True)                           # still needs confirm
     out = tool(svc2, "trip_update", trip=trip["id"], delete=True, confirm=True)
     assert out["deleted"] == trip["id"] and out["segments_deleted"] == 2

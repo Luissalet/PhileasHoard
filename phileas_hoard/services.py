@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 import os
-import secrets as _secrets
 import threading
 import time
 from datetime import date, timedelta
@@ -20,6 +19,7 @@ from .config import Config
 from .db import Database
 from .engine import Engine
 from .errors import PhileasError
+from .hoard_link.tokens import read_or_create_token, write_url
 from .mail.source import SOURCE_MODES, FaustusMail, MailSource
 from .model import (ACTIVE, AVAILABLE_FOR_PICKUP, DELIVERED, EXCEPTION, FAILED_ATTEMPT, FINAL, OUT_FOR_DELIVERY, RETURNED, STATUSES,
                     UNKNOWN, label as status_label, progress)
@@ -81,31 +81,6 @@ NUMERIC = {"travel.gap_days": (0, 14), "travel.departure_hours": (1, 24), "trave
            "checks.night_from": (0, 24), "checks.night_to": (0, 24)}
 
 
-def write_token(config: Config) -> str:
-    """The MCP token is persistent: created once, reused on every later start."""
-    config.data_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        existing = config.token_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        existing = ""
-    if len(existing) >= 32:
-        return existing
-    token = _secrets.token_hex(32)
-    config.token_path.write_text(token, encoding="utf-8")
-    try:
-        config.token_path.chmod(0o600)
-    except OSError:
-        pass
-    return token
-
-
-def write_url(config: Config) -> None:
-    try:
-        config.url_path.write_text(f"http://127.0.0.1:{config.port}", encoding="utf-8")
-    except OSError:
-        pass
-
-
 class Services:
     def __init__(self, config: Config, *, http_transport: Optional[httpx.BaseTransport] = None, clock_fn: Callable[[], float] = time.time,
                  notifier: Any = None, browser: Any = None, mail_runner: Optional[Callable[..., Any]] = None, mail_source: Any = None,
@@ -115,8 +90,8 @@ class Services:
         self.started_at = time.time()
         for d in (config.data_dir, config.cache_dir, config.logs_dir, config.raw_dir):
             d.mkdir(parents=True, exist_ok=True)
-        self.token = write_token(config)
-        write_url(config)
+        self.token = read_or_create_token(config.token_path)       # stable across restarts: the bridge reads the same file
+        write_url(config.url_path, f"http://127.0.0.1:{config.port}")
         self.db = Database(config.db_path)
         self.store = Store(self.db, clock_fn)
         self._load_secrets()

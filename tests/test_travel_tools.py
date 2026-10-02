@@ -7,7 +7,7 @@ import pytest
 import travel_mails as tm
 from conftest import FakeHub, build, tool
 from phileas_hoard.agent_tools import TOOLS_BY_NAME
-from phileas_hoard.errors import PhileasError
+from phileas_hoard.hoard_link.agentkit import AppError  # confirm_required comes from the commons' AppError
 from phileas_hoard.travel import airports
 
 TRAVEL = ["travel_overview", "trips_list", "trip_get", "trip_create", "trip_update", "segment_add", "segment_update", "segment_delete",
@@ -61,14 +61,14 @@ def test_split_move_merge_delete_need_confirmation(tv):
     new = out["new"]["id"]
     assert new != tid and out["original"]["id"] == tid
     assert len(tool(tv, "trips_list", filter="all")["trips"]) == 2
-    with pytest.raises(PhileasError) as e:
+    with pytest.raises(AppError) as e:
         tool(tv, "trip_update", trip=tid, merge_from=new)
     assert e.value.code == "confirm_required"
     tool(tv, "trip_update", trip=tid, merge_from=new, confirm=True)
     assert len(tool(tv, "trips_list", filter="all")["trips"]) == 1
-    with pytest.raises(PhileasError):
+    with pytest.raises(AppError):
         tool(tv, "trip_update", trip=tid, delete=True)
-    with pytest.raises(PhileasError):
+    with pytest.raises(AppError):
         tool(tv, "trip_update", trip=tid)
 
 
@@ -83,7 +83,7 @@ def test_segment_edit_delete_and_checkin(tv):
     assert tool(tv, "checkin_status", trip=tid)["flights"][0]["state"] == "done"
     tool(tv, "checkin_done", segment=sid, done=False)
     assert tool(tv, "checkin_status", trip=tid)["flights"][0]["state"] == "not_open"
-    with pytest.raises(PhileasError) as e:
+    with pytest.raises(AppError) as e:
         tool(tv, "segment_delete", segment=rid)
     assert e.value.code == "confirm_required"
     tool(tv, "segment_delete", segment=rid, confirm=True)
@@ -102,11 +102,11 @@ def test_expenses_through_tools(tv):
     assert [(t["from_name"], t["to_name"], t["amount"]) for t in settle["transfers"]] == [("Luis", "Ana", 25.0)]
     xid = view["expenses"][-1]["id"]
     tool(tv, "trip_expense_update", expense=xid, amount=20)
-    with pytest.raises(PhileasError):
+    with pytest.raises(AppError):
         tool(tv, "trip_expense_delete", expense=xid)
     tool(tv, "trip_expense_delete", expense=xid, confirm=True)
     assert len(tool(tv, "trip_expenses", trip=tid)["expenses"]) == 1
-    with pytest.raises(PhileasError):
+    with pytest.raises(AppError):
         tool(tv, "trip_expense_add", trip=tid, description="", amount=0)
 
 
@@ -154,9 +154,9 @@ def test_dashboard_and_status_carry_travel(client):
 
 
 def test_settings_validation(tv):
-    with pytest.raises(PhileasError):
+    with pytest.raises(AppError):
         tv.set_settings({"travel.home_tz": "Mars/Olympus"})
-    with pytest.raises(PhileasError):
+    with pytest.raises(AppError):
         tv.set_settings({"travel.kinds": "flight,teleport"})
     tv.set_settings({"travel.home_airports": "MAD, bcn", "travel.departure_hours": 5})
     assert tv.setting("travel.departure_hours") == "5" and tv.setting("travel.home_airports").upper() == "MAD,BCN"

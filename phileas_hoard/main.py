@@ -1,4 +1,4 @@
-"""FastAPI application factory: request guard, API routers, static SPA."""
+"""FastAPI application factory: request guard, API routers, PWA, static SPA."""
 
 from __future__ import annotations
 
@@ -6,18 +6,15 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
-from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi import FastAPI
 
 from . import __version__
 from .agenda import make_provider
 from .api import ROUTERS
 from .config import Config
-from .errors import PhileasError
-from .guard import install_guard
 from .hoard_link import family, fam_agenda
+from .hoard_link.guard import install_guard
+from .hoard_link.service import install_error_handlers, install_pwa, install_spa
 from .services import Services
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -42,40 +39,17 @@ def create_app(config: Config | None = None, services: Services | None = None) -
     app.state.config = config
     family.configure("phileas", str(config.data_dir), token_file=str(config.token_path))
 
-    install_guard(app, config.allowed_hosts)
+    install_guard(app, port_getter=lambda: config.port, allowed_hosts=config.allowed_hosts, allowed_env="PHILEAS_ALLOWED_HOSTS")
     # the family agenda (expected deliveries, pickup deadlines, trips): the hub asks with this app's bearer token
     fam_agenda.install_fastapi(app, make_provider(lambda: getattr(app.state, "services", None), lambda: f"http://127.0.0.1:{config.port or 5199}"))
 
-    @app.exception_handler(PhileasError)
-    async def phileas_error(_: Request, exc: PhileasError):
-        return JSONResponse(exc.to_dict(), status_code=exc.status)
-
-    @app.exception_handler(StarletteHTTPException)
-    async def http_error(_: Request, exc: StarletteHTTPException):
-        return JSONResponse({"error": str(exc.detail)}, status_code=exc.status_code)
-
-    @app.exception_handler(RequestValidationError)
-    async def validation_error(_: Request, exc: RequestValidationError):
-        issues = "; ".join(f"{'.'.join(str(p) for p in e['loc'] if p != 'body') or 'input'}: {e['msg']}" for e in exc.errors())
-        return JSONResponse({"error": issues}, status_code=400)
-
-    @app.exception_handler(ValueError)
-    async def value_error(_: Request, exc: ValueError):
-        return JSONResponse({"error": str(exc)}, status_code=400)
+    install_error_handlers(app)
 
     for router in ROUTERS:
         app.include_router(router)
 
-    @app.get("/{path:path}", include_in_schema=False)
-    async def spa(path: str):
-        if path.startswith("api/"):
-            return JSONResponse({"error": "Not found."}, status_code=404)
-        candidate = (STATIC_DIR / path).resolve() if path else None
-        if candidate and candidate.is_file() and STATIC_DIR.resolve() in candidate.parents:
-            return FileResponse(candidate)
-        index = STATIC_DIR / "index.html"
-        if index.is_file():
-            return FileResponse(index)
-        return JSONResponse({"error": "The client is not built yet: run `npm install && npm run build`."}, status_code=503)
+    install_pwa(app, name="Phileas's Hoard", short_name="Phileas", theme="#141c1b", background="#141c1b", cache="phileas-hoard",
+                lang="es", static_dir=STATIC_DIR, version=__version__)
+    install_spa(app, STATIC_DIR)  # last: the catch-all must come after every route
 
     return app
