@@ -11,6 +11,7 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, Request
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from ..agent_tools import TOOLS_BY_NAME, tool_catalog
@@ -65,3 +66,19 @@ def shipment_detail(request: Request, sid: str):
 @router.get("/stats")
 def stats(request: Request):
     return services(request).stats()
+
+
+def _ics_response(out: dict[str, Any]) -> Response:
+    return Response(out["ics"].encode("utf-8"), media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{out["filename"]}"', "Cache-Control": "no-store"})
+
+
+@router.get("/trips/ics")
+def trips_ics(request: Request, trip: str = ""):
+    """The calendar file of every upcoming trip (or of ``?trip=<id or title>``)."""
+    return _ics_response(services(request).travel.ics(trip))
+
+
+@router.get("/trips/{tid}/ics")
+def trip_ics_file(request: Request, tid: str):
+    return _ics_response(services(request).travel.ics(tid))

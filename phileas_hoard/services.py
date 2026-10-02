@@ -26,6 +26,7 @@ from .notify import CHANNELS, EMAIL_BACKENDS, Notifier
 from .scheduler import Scheduler
 from .store import Store
 from .travel import airports as travel_airports
+from .travel.llm import make_link_chat
 from .travel.model import KINDS as TRAVEL_KINDS
 from .travel.service import DEFAULTS as TRAVEL_DEFAULTS, Travel
 from .travel.store import TravelStore
@@ -119,7 +120,7 @@ class Services:
         self.carriers = Carriers(config, config.secret, transport=http_transport, browser=browser, setting=self.setting)
         self.tstore = TravelStore(self.db, clock_fn)
         self.travel = Travel(self.store, self.tstore, self.notifier, setting=self.setting, set_setting=self.db.set_setting, emit=self._emit, clock=clock_fn,
-                             chat=travel_chat, call=hub_call or self._hub_call)
+                             chat=travel_chat or make_link_chat(config.backend_json_path, config.offline), call=hub_call or self._hub_call)
         self.engine = Engine(self.store, self.carriers, self.notifier, settings_get=self.db.get_setting, settings_set=self.db.set_setting,
                              emit=self._emit, clock=clock_fn, raw_dir=config.raw_dir, mail_source=self.mail, travel=self.travel)
         self.scheduler = Scheduler(self.engine, self.store, clock=clock_fn, enabled=config.scheduler,

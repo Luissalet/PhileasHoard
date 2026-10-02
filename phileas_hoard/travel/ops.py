@@ -425,7 +425,11 @@ class Ops:
         if name.strip():
             self.t.update_person(p["id"], name=" ".join(name.split())[:40])
         if is_me:
+            used = {e["payer_id"] for e in self.t.expenses(trip["id"])} | {i for e in self.t.expenses(trip["id"]) for i in json_ids(e)}
             for other in self.t.people(trip["id"]):
+                if other["is_me"] and other["id"] != p["id"] and other["id"] not in used and fold(other["name"]) in ("yo", "me"):
+                    self.t.delete_person(other["id"])      # the placeholder made for the user, now replaced by a real name
+                    continue
                 self.t.update_person(other["id"], is_me=other["id"] == p["id"])
         return {"people": self.t.people(trip["id"])}
 

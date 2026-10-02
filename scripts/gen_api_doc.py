@@ -36,11 +36,22 @@ def main() -> int:
         lines.append("")
     lines += ["## REST routes for the UI", "", "- `GET /api/health`, `GET /api/status`",
               "- `GET /api/dashboard` — active parcels sorted by estimated day, arriving today, needs attention, delivered this week, "
-              "notifications since the last visit, mails to review, mail and carrier sources, scheduler.",
+              "notifications since the last visit, mails to review, mail and carrier sources, scheduler, and a `travel` block "
+              "(trips on now, next trip, check-ins to do, travel mails to review).",
               "- `POST /api/dashboard/visit` — marks notifications seen and records the visit.",
               "- `GET /api/shipments/{id}` — one shipment with events, mails, similar parcels and the sources that answer for it.",
               "- `GET /api/stats` — delivery days per carrier and shop, and how accurate their dates were.",
-              "- `POST /api/ui/call` `{name, arguments}` — any tool above, uncapped.", ""]
+              "- `GET /api/trips/ics` — calendar file (`text/calendar`) with every upcoming and ongoing trip; `?trip=<id or title>` for one.",
+              "- `GET /api/trips/{id}/ics` — calendar file of one trip: a VEVENT per segment, times in UTC, an alarm when check-in opens.",
+              "- `POST /api/ui/call` `{name, arguments}` — any tool above, uncapped.", "",
+              "## Events on the family bus", "",
+              "Emitted through Hoard Link (`family.emit`); the payload carries ids and short titles only.", "",
+              "| Event | When | Payload |", "|---|---|---|",
+              "| `phileas.trip.new` | a trip is created from a mail or by hand | `trip_id`, `title`, `start_date`, `end_date` |",
+              "| `phileas.trip.changed` | a trip's segments or dates change (a booking changed, cancelled, merged, split or moved) | `trip_id`, `title`, `start_date`, `end_date` |",
+              "| `phileas.checkin.open` | a flight's online check-in opens | `trip_id`, `segment_id`, `number`, `from`, `to`, `dep_local` |",
+              "| `phileas.trip.update` | every notification about a trip, through the hub channel | `event_id`, `type`, `severity`, `title`, `summary`, `trip_id`, `segment_id`, `trip_title`, `start_date`, `end_date`, `url` |",
+              "| `phileas.update` | every notification about a parcel, through the hub channel (unchanged) | `event_id`, `type`, `severity`, `title`, `summary`, `shipment_id`, … |", ""]
     (ROOT / "docs" / "API.md").write_text("\n".join(lines), encoding="utf-8")
     print(f"{len(TOOLS)} tools")
     return 0
