@@ -7,7 +7,8 @@ import re
 import pytest
 
 from conftest import FakeHub, build
-from phileas_hoard.travel import airports, ics
+from phileas_hoard.hoard_link.ics import fold_line, ics_escape
+from phileas_hoard.travel import airports
 
 BS = chr(92)
 KAFKA_DOCS = {"documents": [{"id": "d_1", "title": "DNI de Ana", "kind": "identity"}, {"id": "d_2", "title": "Pasaporte de Ana", "kind": "identity"}]}
@@ -216,9 +217,9 @@ def test_ics_has_one_event_per_segment_in_utc_with_an_alarm(tv):
 
 def test_ics_folding_and_cancelled_segments():
     line = "DESCRIPTION:" + "á" * 100
-    folded = ics.fold_line(line)
+    folded = fold_line(line).split("\r\n")
     assert all(len(x.encode()) <= 75 for x in folded) and "".join(x[1:] if i else x for i, x in enumerate(folded)) == line
-    assert ics.esc("a;b,c" + chr(10) + "d" + BS + "e") == "a" + BS + ";b" + BS + ",c" + BS + "nd" + BS + BS + "e"
+    assert ics_escape("a;b,c" + chr(10) + "d" + BS + "e") == "a" + BS + ";b" + BS + ",c" + BS + "nd" + BS + BS + "e"
 
 
 def test_ics_skips_cancelled_and_lists_upcoming(tv):
