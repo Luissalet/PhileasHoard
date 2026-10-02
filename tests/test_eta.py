@@ -66,3 +66,15 @@ def test_promise_and_agreement_raise_confidence():
     e = eta.estimate(s, [], Calendar("ES-MD"), date(2026, 10, 1))
     used = [b.source for b in e.basis if b.used]
     assert "shop" in used and "promise" in used and e.confidence > 68
+
+
+def test_delivery_days_follow_the_carrier_and_the_shared_holiday_table():
+    cal = Calendar("ES-MD")
+    assert cal.is_delivery_day(date(2026, 10, 3), "correos") and not cal.is_delivery_day(date(2026, 10, 3), "ups")   # Saturday
+    assert cal.is_delivery_day(date(2026, 10, 4), "amazon") and not cal.is_delivery_day(date(2026, 10, 4), "correos")  # Sunday
+    assert cal.is_delivery_day(date(2026, 10, 12), "amazon") and not cal.is_delivery_day(date(2026, 10, 12), "ups")    # a holiday
+    assert cal.next_delivery_day(date(2026, 10, 2), "ups") == date(2026, 10, 2)                                          # on or after
+    assert cal.next_delivery_day(date(2026, 10, 2), "ups", include_self=False) == date(2026, 10, 5)
+    # a holiday that falls on a Sunday moves to the Monday (the shared table; the old local one did not model it)
+    assert date(2027, 1, 7) not in holidays(2027, "ES") and date(2026, 12, 7) in holidays(2026, "ES")
+    assert Calendar("nowhere").region == "ES"
