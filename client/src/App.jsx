@@ -4,6 +4,8 @@ import { initialLang, makeT, saveLang } from "./i18n.js";
 import { AppContext } from "./context.js";
 import { ConfirmDialog, Icon, ICONS } from "./components/ui.jsx";
 import Envios from "./pages/Envios.jsx";
+import Viajes from "./pages/Viajes.jsx";
+import Viaje from "./pages/Viaje.jsx";
 import Detalle from "./pages/Detalle.jsx";
 import Correo from "./pages/Correo.jsx";
 import Historial from "./pages/Historial.jsx";
@@ -13,12 +15,13 @@ export { useApp } from "./context.js";
 
 const PAGES = [
   { path: "", key: "nav_shipments", icon: ICONS.box, component: Envios, badge: "news" },
+  { path: "viajes", key: "nav_trips", icon: "M21 16v-2l-8-5V3.5a1.5 1.5 0 00-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z", component: Viajes, badge: "trips" },
   { path: "correo", key: "nav_mail", icon: ICONS.mail, component: Correo, badge: "review" },
   { path: "historial", key: "nav_history", icon: "M12 21a9 9 0 100-18 9 9 0 000 18zM12 7v5l3 2", component: Historial },
   { path: "ajustes", key: "nav_settings", icon: "M12 15a3 3 0 100-6 3 3 0 000 6zM19 12l2-1-1-3-2 .3-1.4-1.4.3-2-3-1-1 2h-2l-1-2-3 1 .3 2L6.8 7.3 5 7 4 10l2 1v2l-2 1 1 3 2-.3 1.4 1.4-.3 2 3 1 1-2h2l1 2 3-1-.3-2 1.4-1.4 2 .3 1-3-2-1z", component: Ajustes },
 ];
 // Not in the nav: reached from the lists.
-const HIDDEN = [{ path: "envio", component: Detalle, parent: "" }];
+const HIDDEN = [{ path: "envio", component: Detalle, parent: "" }, { path: "viaje", component: Viaje, parent: "viajes" }];
 
 function useHashRoute() {
   const read = () => {
@@ -143,7 +146,7 @@ export default function App() {
   const page = hidden || PAGES.find((p) => p.path === route.page) || PAGES[0];
   const activePath = hidden ? hidden.parent : page.path;
   const Component = page.component;
-  const badges = { news: dash?.counts?.unseen_notifications || 0, review: dash?.counts?.mails_review || 0 };
+  const badges = { news: dash?.counts?.unseen_notifications || 0, review: dash?.counts?.mails_review || 0, trips: dash?.travel?.needs_review?.mails || 0 };
 
   return (
     <AppContext.Provider value={value}>
@@ -184,7 +187,7 @@ export default function App() {
               {t("stale")}: {dashError.message}. <button type="button" className="btn-link" onClick={refreshDash}>{t("retry")}</button>
             </div>
           )}
-          <Component key={`${route.page}/${route.param || ""}`} param={route.param} query={route.query} />
+          <Component key={`${route.page}/${route.param || ""}/${route.query.toString()}`} param={route.param} query={route.query} />
           <div className="mt-8 flex flex-wrap items-center gap-3 border-t pt-3 md:hidden" style={{ borderColor: "var(--line)" }}>
             <SchedulerLight scheduler={dash?.scheduler} t={t} />
             <button type="button" className="btn btn-sm" onClick={() => changeLang(lang === "es" ? "en" : "es")}>{t("language")}</button>

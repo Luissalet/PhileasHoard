@@ -4,6 +4,7 @@ import { useApp } from "../context.js";
 import { useMailScan } from "../components/hooks.js";
 import { Busy, Chip, CopyButton, Empty, ErrorBox, ExtLink, Field, Icon, ICONS, Rel, Section, StatusPill, Tabs, useBusy, useLoad } from "../components/ui.jsx";
 import { shortClock } from "../format.js";
+import { KindIcon, localLabel, segCount } from "../components/travel.jsx";
 
 function StatusCard({ onScan, scanning }) {
   const { t, dash } = useApp();
@@ -112,26 +113,78 @@ function MailRow({ mail: m, review, onChanged }) {
   );
 }
 
-function MailTabs() {
+function TravelMailRow({ mail: m, onChanged }) {
+  const { t, lang, notify, refreshDash } = useApp();
+  const [busy, run] = useBusy();
+  const after = async (message) => { if (message) notify(message); await refreshDash(); onChanged(); };
+  const accept = () => run("accept", async () => { await api.call("mail_accept", { message_id: m.message_id }); await after(t("mail_trips_accepted")); });
+  const ignore = () => run("ignore", async () => { await api.call("mail_ignore", { message_id: m.message_id }); await after(t("ignored")); });
+  const again = () => run("again", async () => {
+    const r = await api.call("travel_mail_read_again", { message_id: m.message_id });
+    if (r.status === "no_model") notify(t("mail_trips_no_model"), "error");
+    else await after(t("mail_trips_read_n", { n: (r.read || r.segments || []).length }));
+  });
+  const read = m.read || [];
+  return (
+    <article className="panel space-y-1.5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-semibold" style={{ overflowWrap: "anywhere" }}>{m.subject || t("no_subject")}</span>
+        <span className="help ml-auto">{shortClock(m.ts, lang)}</span>
+      </div>
+      <div className="help" style={{ overflowWrap: "anywhere" }}>{m.from_address}{m.score !== undefined && m.score !== null ? ` · ${t("score")} ${m.score}` : ""}</div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {m.change && m.change !== "new" && <Chip className="chip-amber">{t(`mail_trips_change_${m.change}`)}</Chip>}
+        {m.source === "model" && <Chip className="chip-amber">{t("seg_model")}</Chip>}
+        {m.ref && <Chip className="mono">{m.ref}</Chip>}
+      </div>
+      {read.length === 0 ? <p className="help">{t("mail_trips_nothing")}</p> : (
+        <ul className="m-0 list-none space-y-1.5 p-0">
+          {read.map((d, i) => (
+            <li key={i} className="space-y-0.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span style={{ color: "var(--accent)" }}><KindIcon kind={d.kind} /></span>
+                <span className="font-semibold">{[d.number, [d.from_code || d.from_name, d.to_code || d.to_name].filter(Boolean).join(" → ")].filter(Boolean).join(" ")}</span>
+                <span className="help">{localLabel(d.dep_local, lang)}</span>
+                {d.source === "model" && <Chip className="chip-amber">{d.confidence} %</Chip>}
+              </div>
+              {(d.evidence || []).length > 0 && <ul className="help m-0 list-disc pl-5">{d.evidence.map((x, j) => <li key={j} className="mono">{x}</li>)}</ul>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex flex-wrap items-center gap-2 pt-0.5">
+        <Busy className="btn btn-sm btn-primary" busy={busy.accept} disabled={read.length === 0} onClick={accept}>{t("mail_trips_accept")}</Busy>
+        <Busy className="btn btn-sm" busy={busy.again} onClick={again}>{t("mail_trips_read_again")}</Busy>
+        <Busy className="btn btn-sm" busy={busy.ignore} onClick={ignore}>{t("ignore")}</Busy>
+        {(m.segments || []).length > 0 && <Chip className="chip-ok">{segCount(t, m.segments.length)}</Chip>}
+      </div>
+    </article>
+  );
+}
+
+function MailTabs({ initialTab }) {
   const { t, dash } = useApp();
-  const [tab, setTab] = useState("maybe");
+  const [tab, setTab] = useState(initialTab === "viajes" ? "viajes" : "maybe");
   const args = { maybe: { kind: "maybe", state: "new" }, shipping: { kind: "shipping", state: "all" }, noise: { kind: "noise", state: "all" } }[tab];
-  const { data, error, loading, reload } = useLoad(() => api.call("mail_list", { ...args, limit: 100 }), [tab]);
+  const { data, error, loading, reload } = useLoad(() => (tab === "viajes" ? api.call("travel_mail_list", { state: "new", limit: 100 }) : api.call("mail_list", { ...args, limit: 100 })), [tab]);
   const counts = dash?.counts || {};
   const tabs = [
     { key: "maybe", label: t("tab_maybe"), count: counts.mails_review },
     { key: "shipping", label: t("tab_shipping") },
     { key: "noise", label: t("tab_noise") },
+    { key: "viajes", label: t("mail_tab_trips"), count: dash?.travel?.needs_review?.mails || null },
   ];
   const mails = data?.mails || [];
   return (
     <section className="space-y-3" aria-label={t("mails_title")}>
       <Tabs tabs={tabs} active={tab} onChange={setTab} />
-      <p className="help">{t(`tab_${tab}_hint`)}</p>
+      <p className="help">{tab === "viajes" ? t("mail_trips_help") : t(`tab_${tab}_hint`)}</p>
       <ErrorBox error={error} />
-      {loading && !data ? <p className="help">…</p> : mails.length === 0 ? <Empty>{t(`tab_${tab}_empty`)}</Empty> : (
+      {loading && !data ? <p className="help">…</p> : mails.length === 0 ? <Empty>{tab === "viajes" ? t("mail_trips_empty") : t(`tab_${tab}_empty`)}</Empty> : (
         <div className="card-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(420px, 100%), 1fr))" }}>
-          {mails.map((m) => <MailRow key={m.message_id} mail={m} review={tab === "maybe"} onChanged={reload} />)}
+          {mails.map((m) => (tab === "viajes"
+            ? <TravelMailRow key={m.message_id} mail={m} onChanged={reload} />
+            : <MailRow key={m.message_id} mail={m} review={tab === "maybe"} onChanged={reload} />))}
         </div>
       )}
     </section>
@@ -237,7 +290,7 @@ function DetectNumbers() {
   );
 }
 
-export default function Correo() {
+export default function Correo({ query }) {
   const { t } = useApp();
   const [tick, setTick] = useState(0);
   return (
@@ -248,7 +301,7 @@ export default function Correo() {
       </header>
       <StatusCard key={`s${tick}`} />
       <ScanForm onDone={() => setTick((n) => n + 1)} />
-      <MailTabs key={`m${tick}`} />
+      <MailTabs key={`m${tick}`} initialTab={query?.get("tab")} />
       <div className="grid gap-6 xl:grid-cols-2">
         <PasteMail />
         <DetectNumbers />

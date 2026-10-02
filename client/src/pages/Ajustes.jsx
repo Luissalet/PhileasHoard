@@ -215,6 +215,32 @@ function CarriersTable() {
   );
 }
 
+function CheckinTable() {
+  const { t, lang } = useApp();
+  const { data } = useLoad(() => api.call("checkin_status"), []);
+  const rows = data?.table || [];
+  if (!rows.length) return null;
+  return (
+    <details>
+      <summary className="font-semibold">{t("tset_checkin_table")} <span className="chip">{rows.length}</span></summary>
+      <div className="mt-2 overflow-x-auto">
+        <table>
+          <thead><tr><th>{t("carrier")}</th><th>{t("ci_rule")}</th><th>{t("ci_source")}</th></tr></thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.code}>
+                <td>{r.airline} <span className="help mono">{r.code}</span></td>
+                <td>{lang === "en" ? r.note_en : r.note_es}</td>
+                <td className="help">{r.source} · {r.checked}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  );
+}
+
 function Runs() {
   const { t, notify } = useApp();
   const [busy, run] = useBusy();
@@ -276,6 +302,28 @@ export default function Ajustes() {
             { key: "mail.window_days", type: "number", label: t("mail_window"), hint: t("mail_window_hint") },
             { key: "mail.first_days", type: "number", label: t("mail_first"), hint: t("mail_first_hint") },
           ]} />
+        </div>
+      </Section>
+
+      <Section id="sec-travel" title={t("set_travel")}>
+        <div className="panel space-y-3">
+          <p className="help">{t("set_travel_help")}</p>
+          <SettingsForm settings={settings} onSaved={reload} fields={[
+            { key: "travel.enabled", type: "switch", label: t("tset_enabled"), hint: t("tset_enabled_hint"), wide: true },
+            { key: "travel.home_city", type: "text", label: t("tset_home_city"), hint: t("tset_home_city_hint"), placeholder: "Madrid" },
+            { key: "travel.home_airports", type: "text", label: t("tset_home_airports"), hint: t("tset_home_airports_hint"), placeholder: "MAD" },
+            { key: "travel.home_tz", type: "text", label: t("tset_home_tz"), hint: t("tset_home_tz_hint"), placeholder: "Europe/Madrid" },
+            { key: "travel.gap_days", type: "number", label: t("tset_gap_days"), hint: t("tset_gap_days_hint") },
+            { key: "travel.kinds", type: "text", label: t("tset_kinds"), hint: t("tset_kinds_hint"), wide: true },
+            { key: "travel.departure_hours", type: "number", label: t("tset_departure_hours") },
+            { key: "travel.tomorrow_hour", type: "number", label: t("tset_tomorrow_hour"), hint: t("tset_tomorrow_hour_hint") },
+            { key: "travel.my_name", type: "text", label: t("tset_my_name"), hint: t("tset_my_name_hint") },
+            { key: "travel.ledger_account", type: "text", label: t("tset_ledger_account"), hint: t("tset_ledger_account_hint") },
+            { key: "travel.model_fallback", type: "switch", label: t("tset_model_fallback"), hint: t("tset_model_fallback_hint"), wide: true },
+            { key: "travel.docs_check", type: "switch", label: t("tset_docs_check"), hint: t("tset_docs_check_hint"), wide: true },
+            { key: "travel.docs_days", type: "number", label: t("tset_docs_days") },
+          ]} />
+          <CheckinTable />
         </div>
       </Section>
 

@@ -101,6 +101,15 @@ export default function Envios() {
         </div>
       )}
 
+      {dash.travel?.enabled && (dash.travel.ongoing?.length > 0 || (dash.travel.next_trip && dash.travel.next_trip.days_to_go <= 7)) && (
+        <div className="banner banner-info" role="status">
+          {dash.travel.ongoing?.length > 0
+            ? t("home_trip_now", { name: dash.travel.ongoing[0].title })
+            : t("home_trip_soon", { name: dash.travel.next_trip.title, when: dash.travel.next_trip.days_to_go === 0 ? t("trip_days_to_go_0") : dash.travel.next_trip.days_to_go === 1 ? t("trip_days_to_go_1") : t("trip_days_to_go", { n: dash.travel.next_trip.days_to_go }) })}
+          {" "}<a href={`#/viaje/${encodeURIComponent((dash.travel.ongoing?.[0] || dash.travel.next_trip).id)}`} className="font-semibold">{t("home_trip_go")}</a>
+        </div>
+      )}
+
       {newsShown.length > 0 && <NewsList items={newsShown} onClear={() => setNewsShown([])} />}
 
       {empty && (
