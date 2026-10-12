@@ -140,14 +140,19 @@ export function publishView(extras, hash) {
 // An identity that only an editor snapshot claims (the object may have been deleted behind the open form) is
 // checked against the app's own data before it is named. Kinds without a native lookup are checked through
 // the trip they belong to when the snapshot says which one; otherwise there is nothing to check against.
-async function stillExists(form, call) {
+async function stillExists(form, call, trips = new Map()) {
   try {
     if (form.kind === "shipment") return !!shipmentObject(await call("shipment_get", { shipment: form.object_id }));
     if (form.kind === "trip") return !!tripObject(await call("trip_get", { trip: form.object_id }));
     if (form.trip_id) {
-      const detail = await call("trip_get", { trip: form.trip_id });
+      // one trip_get per trip within a context build, shared by every identity that needs it
+      if (!trips.has(form.trip_id)) trips.set(form.trip_id, call("trip_get", { trip: form.trip_id }));
+      const detail = await trips.get(form.trip_id);
       if (!tripObject(detail)) return false;
       if (form.kind === "segment") return (detail.segments || []).some((s) => s.id === form.object_id);
+      if (form.kind === "expense") return ((detail.expenses && detail.expenses.expenses) || []).some((e) => e.id === form.object_id);
+    } else if (form.kind === "expense") {
+      return false; // no native lookup of an expense by id: not verifiable, so not claimed
     }
   } catch {
     return false;
@@ -159,12 +164,13 @@ export async function buildContext({ hash, call, editor, extras = {} }) {
   // Everything mutable is read before the first await.
   const route = parseRoute(hash);
   const forms = editor ? (editor.forms || [editor]).slice() : [];
+  const trips = new Map();
   const active_objects = await openObjects(route, call);
   // An editor on a stored object (a segment, an expense) names it too, so the assistant has its real id.
   // Its fields stay in view.editor either way; only a confirmed object is claimed as active.
   for (const form of forms) {
     if (form && form.kind && form.object_id && !active_objects.some((o) => o.kind === form.kind && o.object_id === form.object_id)) {
-      if (await stillExists(form, call)) active_objects.push({ kind: form.kind, object_id: form.object_id, title: form.title || form.object_id });
+      if (await stillExists(form, call, trips)) active_objects.push({ kind: form.kind, object_id: form.object_id, title: form.title || form.object_id });
     }
   }
   const view = { page: route.page || "envios" };

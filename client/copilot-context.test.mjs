@@ -80,9 +80,9 @@ test('editors answer through the context request, several as a list', () => {
 });
 
 test('the context carries the open object, the page, the tab and the unsaved fields', async () => {
-  const call = fakeCall({ 'trip_get:t_1': TRIP });
+  const call = fakeCall({ 'trip_get:t_1': { ...TRIP, expenses: { expenses: [{ id: 'x_1' }] } } });
   publishView({ tab: 'expenses' }, '#/viaje/t_1');
-  const editor = { form: 'expense', mode: 'edit', kind: 'expense', object_id: 'x_1', title: 'Taxi', fields: { amount: '12' }, changed: { amount: '12' } };
+  const editor = { form: 'expense', mode: 'edit', kind: 'expense', object_id: 'x_1', trip_id: 't_1', title: 'Taxi', fields: { amount: '12' }, changed: { amount: '12' } };
   const ctx = await buildContext({ hash: '#/viaje/t_1', call, editor, extras: { tab: 'expenses' } });
   assert.equal(ctx.view.page, 'viaje');
   assert.equal(ctx.view.object_id, 't_1');
@@ -94,6 +94,29 @@ test('the context carries the open object, the page, the tab and the unsaved fie
   assert.deepEqual(creation.active_objects, []);
   assert.equal(creation.view.page, 'envios');
   assert.equal(creation.view.editor.fields.tracking_number, 'ZZ1');
+});
+
+test('an edited expense is an active object only while the trip still lists it', async () => {
+  const editor = { form: 'expense', mode: 'edit', kind: 'expense', object_id: 'x_1', trip_id: 't_1', title: 'Taxi', fields: { amount: '12', note: 'pending' }, changed: { note: 'pending' } };
+  // deleted behind the open form: trip_get answers without it
+  const gone = await buildContext({ hash: '#/', call: fakeCall({ 'trip_get:t_1': { ...TRIP, expenses: { expenses: [] } } }), editor });
+  assert.deepEqual(gone.active_objects, []);
+  assert.deepEqual(gone.view.editor, editor); // every pending field is kept
+  // still there
+  const here = await buildContext({ hash: '#/', call: fakeCall({ 'trip_get:t_1': { ...TRIP, expenses: { expenses: [{ id: 'x_1' }] } } }), editor });
+  assert.deepEqual(here.active_objects.map((o) => [o.kind, o.object_id]), [['expense', 'x_1']]);
+  // no trip_id: nothing to verify it against, so it is not claimed, fields kept
+  const { trip_id, ...loose } = editor;
+  const noTrip = await buildContext({ hash: '#/', call: fakeCall({}), editor: loose });
+  assert.deepEqual(noTrip.active_objects, []);
+  assert.deepEqual(noTrip.view.editor, loose);
+  // several identities of one trip share a single trip_get
+  let reads = 0;
+  const call = async (name, args) => { reads++; return { ...TRIP, expenses: { expenses: [{ id: 'x_1' }] } }; };
+  const seg = { form: 'segment', kind: 'segment', object_id: 'g_1', trip_id: 't_1', fields: {} };
+  const both = await buildContext({ hash: '#/', call, editor: { forms: [editor, seg] } });
+  assert.equal(both.active_objects.length, 2);
+  assert.equal(reads, 1);
 });
 
 test('typing during a pending save keeps the later draft and does not close', () => {
