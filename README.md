@@ -53,6 +53,16 @@ Travel settings (Settings → Viajes): `travel.enabled`, home city, home airport
 
 Environment: `PHILEAS_PORT` (5199), `PHILEAS_DATA_DIR`, `PORT_STRICT=1`, `PHILEAS_SCHEDULER=0` (no background work), `PHILEAS_OFFLINE=1` (no network), `PHILEAS_BROWSER=0` (no browser rung). Keys can go in `.env` (see `.env.example`) or in Settings.
 
+## Faustus assistant
+
+Once the shared Hoard Link launcher is installed, the app shows the family's Faustus panel (a floating button). The conversation, the model and the tools live in Faustus; this app only tells the panel what is open.
+
+- **Context per view.** An open parcel (`#/envio/<id>`) is sent as kind `shipment` with its real id, status, carrier, tracking number, shop, item, order reference, origin country, notes and flags. The pickup code is never sent. An open trip (`#/viaje/<id>`) is sent as kind `trip` with dates, currency, notes and up to 40 segments (id, kind, label, status). Lists, settings and creation views (`new`) give no object.
+- **Unsaved fields.** The panel asks for them with the `phileas:context-request` window event. The open forms answer with what is typed so far: parcel edit and rename, trip rename and notes, segment and expense (`mode: new` or `edit`).
+- **Refresh.** When the assistant finishes a turn the open view reloads in place (`hoard:copilot-turn-end` / `window.hoardCopilot.onTurnEnd`). Fields you are typing keep your value; untouched ones follow the new data.
+- **Saving.** Forms send only the fields you changed to `shipment_update`, `trip_update`, `segment_update` and `trip_expense_update`, which merge just those fields; an empty string clears a field. No endpoint changed.
+- **Tests.** `node --test client/copilot-context.test.mjs` and `venv/Scripts/python -m pytest tests/test_partial_update.py`.
+
 ## Assistants (MCP)
 
 `mcp_server.py` is a stdio MCP bridge. It never opens the database: it proxies every call to the running app with the token in `data/mcp-token`, and starts the app when it is not answering. `faustus-plugin.json` describes the app, its health check and the bridge for Faustus and the Hoard Hub.

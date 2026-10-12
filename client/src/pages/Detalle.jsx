@@ -3,6 +3,7 @@ import { api } from "../api.js";
 import { useApp } from "../context.js";
 import { Eta, TrackingNumber, useRefresh } from "../components/cards.jsx";
 import { Busy, Chip, Confidence, CopyButton, Empty, ErrorBox, ExtLink, Field, Icon, ICONS, Progress, Rel, Section, StatusPill, useBusy, useLoad } from "../components/ui.jsx";
+import { useContextProvider, useRebasedDraft } from "../components/hooks.js";
 import { clock, dayLabel, shortClock, windowLabel } from "../format.js";
 import { BASIS_ICON, STATUS_META } from "../meta.js";
 
@@ -10,19 +11,25 @@ function Header({ s, onChanged }) {
   const { t, notify, refreshDash, confirm } = useApp();
   const [busy, run] = useBusy();
   const [editing, setEditing] = useState(false);
-  const [label, setLabel] = useState(s.label || "");
+  // The name being typed survives a refresh (the assistant may have changed other things meanwhile).
+  const rename = useRebasedDraft({ label: s.label || "" });
+  const label = rename.draft.label;
+  const setLabel = (value) => rename.set("label", value);
+  useContextProvider(() => (editing ? { form: "shipment_label", mode: "edit", kind: "shipment", object_id: s.id, title: s.label || s.item || s.tracking_number, fields: rename.draft, changed: rename.changed } : null), editing);
   const [refreshing, refresh] = useRefresh(s, onChanged);
-  useEffect(() => setLabel(s.label || ""), [s.label]);
 
   const update = (key, values, message) => run(key, async () => {
     await api.call("shipment_update", { shipment: s.id, ...values });
     if (message) notify(message);
     await refreshDash();
     await onChanged();
+    return true;
   });
   const saveLabel = (e) => {
     e.preventDefault();
-    update("label", { label: label.trim() }, t("saved")).then(() => setEditing(false));
+    const sent = { ...rename.changed };
+    // Closes only after a successful save and when nothing was typed since the snapshot that was sent.
+    update("label", { label: label.trim() }, t("saved")).then((ok) => { if (ok && rename.saved(sent)) setEditing(false); });
   };
   const markDelivered = async () => {
     const ok = await confirm({ title: t("mark_delivered"), message: t("mark_delivered_msg"), confirmLabel: t("mark_delivered"), danger: false });
@@ -232,13 +239,13 @@ function MailsPanel({ mails }) {
 function EditForm({ s, onChanged }) {
   const { t, notify, refreshDash, carriers, loadCarriers } = useApp();
   const [busy, run] = useBusy();
-  const init = () => ({ merchant: s.merchant || "", item: s.item || "", carrier: s.carrier || "", tracking_number: s.tracking_number || "", origin_country: s.origin_country || "", notes: s.notes || "" });
-  const [f, setF] = useState(init);
+  const form = useRebasedDraft({ merchant: s.merchant || "", item: s.item || "", carrier: s.carrier || "", tracking_number: s.tracking_number || "", origin_country: s.origin_country || "", notes: s.notes || "" });
+  const f = form.draft;
+  const set = form.set;
+  // Only fields the user changed by hand are sent; what the assistant changed meanwhile is kept.
+  const changed = Object.keys(form.changed);
   useEffect(() => { loadCarriers(); }, [loadCarriers]);
-  useEffect(() => setF(init()), [s.id, s.merchant, s.item, s.carrier, s.tracking_number, s.origin_country, s.notes]); // eslint-disable-line react-hooks/exhaustive-deps
-  const set = (k, v) => setF((o) => ({ ...o, [k]: v }));
-  const base = init();
-  const changed = Object.keys(f).filter((k) => f[k] !== base[k]);
+  useContextProvider(() => ({ form: "shipment_edit", mode: "edit", kind: "shipment", object_id: s.id, title: s.label || s.item || s.tracking_number, fields: f, changed: form.changed }));
   const submit = (e) => {
     e.preventDefault();
     if (!changed.length) return;

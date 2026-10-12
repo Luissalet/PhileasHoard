@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { useApp } from "../context.js";
 import { Busy, Chip, ErrorBox, Field, Rel, Section, Switch, useBusy, useLoad } from "../components/ui.jsx";
+import { useContextProvider, useRebasedDraft } from "../components/hooks.js";
 import { duration } from "../format.js";
 import { CHANNELS, REGIONS, SEVERITIES } from "../meta.js";
 
@@ -35,10 +36,12 @@ function SettingsForm({ fields, settings, onSaved, children }) {
   const { t, notify } = useApp();
   const [busy, run] = useBusy();
   const original = (f) => settings[f.key] ?? "";
-  const [draft, setDraft] = useState(() => Object.fromEntries(fields.map((f) => [f.key, original(f)])));
-  useEffect(() => setDraft(Object.fromEntries(fields.map((f) => [f.key, original(f)]))), [settings]); // eslint-disable-line react-hooks/exhaustive-deps
-  const dirty = fields.filter((f) => String(draft[f.key]) !== String(original(f)));
-  const set = (key, value) => setDraft((d) => ({ ...d, [key]: value }));
+  // A refresh updates the fields nobody touched; typed values stay.
+  const form = useRebasedDraft(Object.fromEntries(fields.map((f) => [f.key, original(f)])));
+  const draft = form.draft;
+  const dirty = fields.filter((f) => String(draft[f.key]) !== String(form.base[f.key]));
+  const set = form.set;
+  useContextProvider(() => (dirty.length ? { form: "settings", mode: "edit", fields: Object.fromEntries(fields.map((f) => [f.key, draft[f.key]])), changed: Object.fromEntries(dirty.map((f) => [f.key, draft[f.key]])) } : null));
   const save = (e) => {
     e.preventDefault();
     if (!dirty.length) return;

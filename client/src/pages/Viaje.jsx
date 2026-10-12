@@ -5,6 +5,9 @@ import { Busy, Chip, ErrorBox, Field, Icon, ICONS, Modal, Section, Tabs, useBusy
 import {
   CATEGORIES, CheckinChip, segCount, KindIcon, PasteModal, SegmentCard, SegmentEditor, StatusChip, daysToGo, localLabel, tripWhen, tsIn, useTripChoices,
 } from "../components/travel.jsx";
+import { useContextProvider, useRebasedDraft } from "../components/hooks.js";
+import { afterAddSave } from "../copilot-context.js";
+import { publishView } from "../copilot-context.js";
 import { dayLabel, money, num } from "../format.js";
 
 const ICS_ICON = "M5 5h14v15H5zM5 10h14M9 3v4M15 3v4M12 13v5M9.5 15.5L12 18l2.5-2.5";
@@ -150,10 +153,14 @@ function PeopleBox({ tripId, people, suggested, onChanged }) {
 function ExpenseModal({ trip, people, expense, onClose, onSaved }) {
   const { t, notify } = useApp();
   const [busy, run] = useBusy();
-  const editing = !!expense;
+  // After the first save of an add form with a later draft pending, the form becomes an edit of the new record.
+  const [createdId, setCreatedId] = useState(null);
+  const editId = expense?.id || createdId;
+  const editing = !!editId;
   const today = new Date().toISOString().slice(0, 10);
   const me = people.find((p) => p.is_me) || people[0];
-  const [d, setD] = useState(() => ({
+  // Untouched fields follow the stored expense when it is refreshed; edited ones stay as typed.
+  const form = useRebasedDraft({
     description: expense?.description || "",
     amount: expense ? String(expense.amount) : "",
     currency: expense?.currency || trip.currency,
@@ -162,26 +169,54 @@ function ExpenseModal({ trip, people, expense, onClose, onSaved }) {
     mode: expense?.split_mode || "equal",
     date: expense?.date || today,
     category: expense?.category || "other",
-  }));
+  });
+  const d = form.draft;
+  const set = form.set;
   const [who, setWho] = useState(() => new Set(expense?.split?.participants || people.map((p) => p.id)));
   const [shares, setShares] = useState(() => Object.fromEntries(people.map((p) => [p.id, String(expense?.split?.shares?.[p.id] ?? 1)])));
   const [amounts, setAmounts] = useState(() => Object.fromEntries(people.map((p) => [p.id, String(expense?.split?.amounts?.[p.id] ?? "")])));
-  const set = (key, value) => setD((x) => ({ ...x, [key]: value }));
+  const splitKey = () => JSON.stringify([[...who].sort(), shares, amounts]);
+  const splitAtOpen = useRef(null);
+  if (splitAtOpen.current === null) splitAtOpen.current = splitKey();
+  useContextProvider(() => ({
+    form: "expense", mode: editing ? "edit" : "new", ...(editing ? { kind: "expense", object_id: editId, title: d.description } : {}),
+    trip_id: trip.id,
+    fields: { ...d, split_people: [...who], split_shares: shares, split_amounts: amounts },
+    changed: { ...form.changed, ...(splitKey() !== splitAtOpen.current ? { split: true } : {}) },
+  }));
   const foreign = d.currency && d.currency.toUpperCase() !== trip.currency;
   const exactSum = people.reduce((n, p) => n + (Number(amounts[p.id]) || 0), 0);
+  const splitNow = useRef(null);
+  splitNow.current = splitKey();
   const submit = (e) => {
     e.preventDefault();
+    const sent = { ...form.changed };
+    const sentSplit = splitKey();
     run("save", async () => {
+      let created = null;
       let split = {};
       if (d.mode === "equal") split = who.size === people.length ? {} : { people: [...who] };
       if (d.mode === "shares") split = { shares: Object.fromEntries(people.filter((p) => Number(shares[p.id]) > 0).map((p) => [p.id, Number(shares[p.id])])) };
       if (d.mode === "exact") split = { amounts: Object.fromEntries(people.filter((p) => Number(amounts[p.id]) > 0).map((p) => [p.id, Number(amounts[p.id])])) };
       const body = { description: d.description, amount: Number(d.amount), payer: d.payer, currency: d.currency.toUpperCase(), rate: foreign ? Number(d.rate) : 1, split_mode: d.mode, split, category: d.category, date: d.date };
-      if (editing) await api.call("trip_expense_update", { expense: expense.id, ...body });
-      else await api.call("trip_expense_add", { trip: trip.id, ...body });
+      if (editing) {
+        // Only what the user changed: an amount or a category the assistant fixed meanwhile is not put back.
+        const c = form.changed;
+        const patch = {};
+        for (const key of ["description", "payer", "date", "category"]) if (key in c) patch[key] = body[key];
+        if ("amount" in c) patch.amount = body.amount;
+        if ("currency" in c || "rate" in c) { patch.currency = body.currency; patch.rate = body.rate; }
+        if ("mode" in c || splitKey() !== splitAtOpen.current) { patch.split_mode = body.split_mode; patch.split = body.split; }
+        if (Object.keys(patch).length) await api.call("trip_expense_update", { expense: editId, ...patch });
+      } else created = await api.call("trip_expense_add", { trip: trip.id, ...body });
       notify(t("exp_saved"));
       await onSaved();
-      onClose();
+      // Anything typed (or toggled in the split) while the request was pending stays open, rebased onto what was saved.
+      splitAtOpen.current = sentSplit;
+      const settled = form.saved(sent);
+      const next = afterAddSave(created, "expense", settled && splitNow.current === sentSplit);
+      if (next.close) onClose();
+      else if (next.id) setCreatedId(next.id); // a later draft is pending: the next Save updates this record, never adds another
     });
   };
   const toggle = (id) => setWho((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -355,7 +390,7 @@ function ExpensesTab({ trip }) {
       )}
 
       {data.expenses.length > 0 && <LedgerBox trip={trip} view={data} onChanged={reload} />}
-      {editing && <ExpenseModal trip={trip} people={people} expense={editing.id ? editing : null} onClose={() => setEditing(null)} onSaved={reload} />}
+      {editing && <ExpenseModal trip={trip} people={people} expense={editing.id ? (data.expenses.find((x) => x.id === editing.id) || editing) : null} onClose={() => setEditing(null)} onSaved={reload} />}
     </div>
   );
 }
@@ -364,8 +399,15 @@ function ExpensesTab({ trip }) {
 function RenameModal({ trip, onClose, onSaved }) {
   const { t, notify } = useApp();
   const [busy, run] = useBusy();
-  const [title, setTitle] = useState(trip.title);
-  const save = (value) => run("save", async () => { await api.call("trip_update", { trip: trip.id, title: value }); notify(t("trip_renamed")); await onSaved(); onClose(); });
+  const form = useRebasedDraft({ title: trip.title });
+  const title = form.draft.title;
+  const setTitle = (value) => form.set("title", value);
+  useContextProvider(() => ({ form: "trip_rename", mode: "edit", kind: "trip", object_id: trip.id, title: trip.title, fields: form.draft, changed: form.changed }));
+  // Typing that continues while the request is pending is kept (rebased onto the saved title): the modal only closes when nothing is left unsaved.
+  const save = (value) => {
+    const sent = { ...form.changed };
+    return run("save", async () => { await api.call("trip_update", { trip: trip.id, title: value }); notify(t("trip_renamed")); await onSaved(); if (form.saved(sent)) onClose(); });
+  };
   return (
     <Modal title={t("trip_rename")} onClose={onClose}>
       <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); save(title); }}>
@@ -441,6 +483,7 @@ export default function Viaje({ param, query }) {
   const { data, error, loading, reload } = useLoad(() => api.call("trip_get", { trip: id }), [id]);
   const others = useTripChoices(id);
   const [tab, setTab] = useState(query?.get("tab") === "gastos" ? "expenses" : "plan");
+  useEffect(() => { publishView({ tab }, window.location.hash); }, [tab, id]);
   const [busy, run] = useBusy();
   const [modal, setModal] = useState(null);
   const [picked, setPicked] = useState(new Set());
@@ -559,7 +602,7 @@ export default function Viaje({ param, query }) {
       {tab === "expenses" && <ExpensesTab trip={trip} />}
 
       {modal?.kind === "add" && <SegmentEditor trips={[trip, ...others]} tripId={trip.id} onClose={() => setModal(null)} onSaved={after} />}
-      {modal?.kind === "edit" && <SegmentEditor segment={modal.segment} onClose={() => setModal(null)} onSaved={after} />}
+      {modal?.kind === "edit" && <SegmentEditor segment={segments.find((x) => x.id === modal.segment.id) || modal.segment} onClose={() => setModal(null)} onSaved={after} />}
       {modal?.kind === "paste" && <PasteModal trips={[trip, ...others]} tripId={trip.id} onClose={() => setModal(null)} onDone={after} />}
       {modal?.kind === "rename" && <RenameModal trip={trip} onClose={() => setModal(null)} onSaved={after} />}
       {modal?.kind === "merge" && <MergeModal trip={trip} others={others} onClose={() => setModal(null)} onSaved={after} />}
@@ -571,8 +614,11 @@ export default function Viaje({ param, query }) {
 function NotesBox({ trip, onSaved }) {
   const { t, notify } = useApp();
   const [busy, run] = useBusy();
-  const [text, setText] = useState(trip.notes || "");
-  const dirty = text !== (trip.notes || "");
+  const form = useRebasedDraft({ notes: trip.notes || "" });
+  const text = form.draft.notes;
+  const setText = (value) => form.set("notes", value);
+  const dirty = "notes" in form.changed;
+  useContextProvider(() => ({ form: "trip_notes", mode: "edit", kind: "trip", object_id: trip.id, title: trip.title, fields: form.draft, changed: form.changed }));
   return (
     <form className="panel space-y-2" onSubmit={(e) => { e.preventDefault(); run("save", async () => { await api.call("trip_update", { trip: trip.id, notes: text }); notify(t("saved")); await onSaved(); }); }}>
       <textarea className="field" rows={3} value={text} onChange={(e) => setText(e.target.value)} aria-label={t("trip_notes")} />

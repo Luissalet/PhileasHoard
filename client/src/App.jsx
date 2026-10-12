@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { api, errorText } from "./api.js";
 import { initialLang, makeT, saveLang } from "./i18n.js";
 import { AppContext } from "./context.js";
+import { REFRESH_EVENT } from "./copilot-context.js";
 import { ConfirmDialog, Icon, ICONS } from "./components/ui.jsx";
 import Envios from "./pages/Envios.jsx";
 import Viajes from "./pages/Viajes.jsx";
@@ -105,7 +106,9 @@ export default function App() {
     const timer = setInterval(() => { if (!document.hidden) refreshDash(); }, 60000);
     const onVisible = () => { if (!document.hidden) refreshDash(); };
     document.addEventListener("visibilitychange", onVisible);
-    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+    // The assistant finished a turn: the dashboard (and the lists built from it) read again in place.
+    window.addEventListener(REFRESH_EVENT, refreshDash);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); window.removeEventListener(REFRESH_EVENT, refreshDash); };
   }, [refreshDash]);
 
   const notify = useCallback((message, kind = "ok") => setToast({ message, kind, id: Math.random() }), []);
