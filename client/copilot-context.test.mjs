@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildContext, changedFields, editorContext, mergeSnapshots, openObjects, parseRoute, publishView, rebaseDraft, requestRefresh, settleSave, shouldCloseAfterSave,
+  afterAddSave, buildContext, changedFields, editorContext, mergeSnapshots, openObjects, parseRoute, publishView, rebaseDraft, requestRefresh, settleSave, shouldCloseAfterSave,
   CONTEXT_REQUEST, REFRESH_EVENT,
 } from './src/copilot-context.js';
 
@@ -126,6 +126,31 @@ test('every save-then-close modal asks the draft before closing', async () => {
   const detalle = await read('./src/pages/Detalle.jsx');
   for (const src of [rename, expense, segment, detalle]) assert.match(src, /\.saved\(sent\)/);
   assert.equal(/await onSaved\(\);\s*onClose\(\);/.test(rename + expense + segment), false);
+});
+
+test('an add form with a later draft pending becomes an edit of the new record, never a second add', async () => {
+  // the create calls answer with the record: { expense: { id } } / { segment: { id } }
+  assert.deepEqual(afterAddSave({ expense: { id: 'e_1' } }, 'expense', false), { close: false, id: 'e_1' });
+  assert.deepEqual(afterAddSave({ segment: { id: 'g_9', trip_id: 't_1' } }, 'segment', false), { close: false, id: 'g_9' });
+  // nothing pending: the add form closes as before
+  assert.deepEqual(afterAddSave({ expense: { id: 'e_1' } }, 'expense', true), { close: true });
+  // the id cannot be read: fall back to closing, for add forms only
+  assert.deepEqual(afterAddSave({ ok: true }, 'expense', false), { close: true });
+  assert.deepEqual(afterAddSave({ expense: {} }, 'expense', false), { close: true });
+  // an edit (no create answer) keeps the plain settled rule
+  assert.deepEqual(afterAddSave(null, 'expense', false), { close: false });
+  assert.deepEqual(afterAddSave(null, 'expense', true), { close: true });
+  // after the switch the later draft is what the next Save sends, on top of the saved values
+  const sent = { description: 'Taxi' };
+  const later = { description: 'Taxi to airport' };
+  const out = settleSave({ description: '' }, sent, later);
+  assert.equal(out.close, false);
+  assert.deepEqual(changedFields(out.base, later), { description: 'Taxi to airport' });
+  // both add forms use it
+  const { readFile } = await import('node:fs/promises');
+  const read = (p) => readFile(new URL(p, import.meta.url), 'utf8');
+  assert.match(await read('./src/pages/Viaje.jsx'), /afterAddSave\(created, "expense"/);
+  assert.match(await read('./src/components/travel.jsx'), /afterAddSave\(created, "segment"/);
 });
 
 test('an editor snapshot of a deleted object names no active object but keeps its fields in view', async () => {

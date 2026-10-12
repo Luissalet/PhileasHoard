@@ -47,6 +47,17 @@ export function settleSave(base, sent, current) {
   return { base: next, close: shouldCloseAfterSave(sent, current) && Object.keys(changedFields(next, current)).length === 0 };
 }
 
+// What an add form does after a successful save. `created` is the add call's answer ({ expense: { id } } or
+// { segment: { id } }; null for an edit), `key` names the record, `settled` says nothing is pending any more.
+// A pending later draft turns the form into an edit of the new record (next Save updates it, never adds a
+// duplicate); if the id cannot be read from the answer the form closes as it always did.
+export function afterAddSave(created, key, settled) {
+  if (!created) return { close: settled };
+  const id = created[key] && created[key].id;
+  if (settled || !id) return { close: true };
+  return { close: false, id };
+}
+
 export function parseRoute(hash) {
   const [path, query = ""] = String(hash || "").replace(/^#\/?/, "").split("?");
   const parts = path.split("/").filter(Boolean).map((p) => {

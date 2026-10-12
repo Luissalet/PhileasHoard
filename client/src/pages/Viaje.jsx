@@ -6,6 +6,7 @@ import {
   CATEGORIES, CheckinChip, segCount, KindIcon, PasteModal, SegmentCard, SegmentEditor, StatusChip, daysToGo, localLabel, tripWhen, tsIn, useTripChoices,
 } from "../components/travel.jsx";
 import { useContextProvider, useRebasedDraft } from "../components/hooks.js";
+import { afterAddSave } from "../copilot-context.js";
 import { publishView } from "../copilot-context.js";
 import { dayLabel, money, num } from "../format.js";
 
@@ -152,7 +153,10 @@ function PeopleBox({ tripId, people, suggested, onChanged }) {
 function ExpenseModal({ trip, people, expense, onClose, onSaved }) {
   const { t, notify } = useApp();
   const [busy, run] = useBusy();
-  const editing = !!expense;
+  // After the first save of an add form with a later draft pending, the form becomes an edit of the new record.
+  const [createdId, setCreatedId] = useState(null);
+  const editId = expense?.id || createdId;
+  const editing = !!editId;
   const today = new Date().toISOString().slice(0, 10);
   const me = people.find((p) => p.is_me) || people[0];
   // Untouched fields follow the stored expense when it is refreshed; edited ones stay as typed.
@@ -175,7 +179,7 @@ function ExpenseModal({ trip, people, expense, onClose, onSaved }) {
   const splitAtOpen = useRef(null);
   if (splitAtOpen.current === null) splitAtOpen.current = splitKey();
   useContextProvider(() => ({
-    form: "expense", mode: editing ? "edit" : "new", ...(editing ? { kind: "expense", object_id: expense.id, title: expense.description } : {}),
+    form: "expense", mode: editing ? "edit" : "new", ...(editing ? { kind: "expense", object_id: editId, title: d.description } : {}),
     trip_id: trip.id,
     fields: { ...d, split_people: [...who], split_shares: shares, split_amounts: amounts },
     changed: { ...form.changed, ...(splitKey() !== splitAtOpen.current ? { split: true } : {}) },
@@ -189,6 +193,7 @@ function ExpenseModal({ trip, people, expense, onClose, onSaved }) {
     const sent = { ...form.changed };
     const sentSplit = splitKey();
     run("save", async () => {
+      let created = null;
       let split = {};
       if (d.mode === "equal") split = who.size === people.length ? {} : { people: [...who] };
       if (d.mode === "shares") split = { shares: Object.fromEntries(people.filter((p) => Number(shares[p.id]) > 0).map((p) => [p.id, Number(shares[p.id])])) };
@@ -202,14 +207,16 @@ function ExpenseModal({ trip, people, expense, onClose, onSaved }) {
         if ("amount" in c) patch.amount = body.amount;
         if ("currency" in c || "rate" in c) { patch.currency = body.currency; patch.rate = body.rate; }
         if ("mode" in c || splitKey() !== splitAtOpen.current) { patch.split_mode = body.split_mode; patch.split = body.split; }
-        if (Object.keys(patch).length) await api.call("trip_expense_update", { expense: expense.id, ...patch });
-      } else await api.call("trip_expense_add", { trip: trip.id, ...body });
+        if (Object.keys(patch).length) await api.call("trip_expense_update", { expense: editId, ...patch });
+      } else created = await api.call("trip_expense_add", { trip: trip.id, ...body });
       notify(t("exp_saved"));
       await onSaved();
       // Anything typed (or toggled in the split) while the request was pending stays open, rebased onto what was saved.
       splitAtOpen.current = sentSplit;
       const settled = form.saved(sent);
-      if (settled && splitNow.current === sentSplit) onClose();
+      const next = afterAddSave(created, "expense", settled && splitNow.current === sentSplit);
+      if (next.close) onClose();
+      else if (next.id) setCreatedId(next.id); // a later draft is pending: the next Save updates this record, never adds another
     });
   };
   const toggle = (id) => setWho((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });

@@ -4,6 +4,7 @@ import { useApp } from "../context.js";
 import { dayLabel, isoDate, locale, money, shortClock, windowLabel } from "../format.js";
 import { Busy, Chip, ExtLink, Field, Icon, Modal, useBusy } from "./ui.jsx";
 import { useContextProvider, useRebasedDraft } from "./hooks.js";
+import { afterAddSave } from "../copilot-context.js";
 
 export const KINDS = ["flight", "train", "bus", "ferry", "car", "lodging", "event"];
 export const CATEGORIES = ["transport", "lodging", "food", "activities", "shopping", "other"];
@@ -196,7 +197,10 @@ function fromSegment(s) {
 export function SegmentEditor({ segment, trips = [], tripId = "", onClose, onSaved }) {
   const { t, notify } = useApp();
   const [busy, run] = useBusy();
-  const editing = !!segment;
+  // After the first save of an add form with a later draft pending, the form becomes an edit of the new segment.
+  const [createdId, setCreatedId] = useState(null);
+  const segmentId = segment?.id || createdId;
+  const editing = !!segmentId;
   // A refresh (the assistant edited this segment) updates untouched fields; typed ones stay.
   const form = useRebasedDraft(useMemo(() => (segment ? fromSegment(segment) : blank()), [segment]));
   const draft = form.draft;
@@ -204,7 +208,7 @@ export function SegmentEditor({ segment, trips = [], tripId = "", onClose, onSav
   const set = form.set;
   const [trip, setTrip] = useState(tripId);
   useContextProvider(() => ({
-    form: "segment", mode: editing ? "edit" : "new", ...(editing ? { kind: "segment", object_id: segment.id, title: segment.label } : {}),
+    form: "segment", mode: editing ? "edit" : "new", ...(editing ? { kind: "segment", object_id: segmentId, title: segment?.label || draft.number || draft.kind } : {}),
     ...(trip ? { trip_id: trip } : {}), fields: draft,
     changed: editing ? form.changed : Object.fromEntries(FIELDS.filter((k) => String(draft[k]) !== "" && !(k === "status" && draft[k] === "confirmed")).map((k) => [k, draft[k]])),
   }));
@@ -219,20 +223,23 @@ export function SegmentEditor({ segment, trips = [], tripId = "", onClose, onSav
     e.preventDefault();
     const sent = { ...form.changed };
     run("save", async () => {
+      let created = null;
       const keys = editing ? FIELDS.filter((k) => String(draft[k]) !== String(original[k])) : FIELDS.filter((k) => String(draft[k]) !== "" && !(k === "status" && draft[k] === "confirmed"));
       const args = {};
       for (const k of keys) args[k] = k === "price" ? (draft[k] === "" ? 0 : Number(draft[k])) : draft[k];
       if (editing) {
         if (!keys.length) { notify(t("seg_nothing_changed")); onClose(); return; }
-        await api.call("segment_update", { segment: segment.id, ...args });
+        await api.call("segment_update", { segment: segmentId, ...args });
         notify(t("seg_saved"));
       } else {
-        await api.call("segment_add", { kind, trip, ...args });
+        created = await api.call("segment_add", { kind, trip, ...args });
         notify(t("seg_added"));
       }
       await onSaved();
       // Typing during the pending save stays open (rebased onto the saved values); close only when nothing is left.
-      if (form.saved(sent)) onClose();
+      const next = afterAddSave(created, "segment", form.saved(sent));
+      if (next.close) onClose();
+      else if (next.id) setCreatedId(next.id); // a later draft is pending: the next Save updates this segment, never adds another
     });
   };
   return (
