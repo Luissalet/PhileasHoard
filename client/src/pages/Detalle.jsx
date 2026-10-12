@@ -23,10 +23,13 @@ function Header({ s, onChanged }) {
     if (message) notify(message);
     await refreshDash();
     await onChanged();
+    return true;
   });
   const saveLabel = (e) => {
     e.preventDefault();
-    update("label", { label: label.trim() }, t("saved")).then(() => setEditing(false));
+    const sent = { ...rename.changed };
+    // Closes only after a successful save and when nothing was typed since the snapshot that was sent.
+    update("label", { label: label.trim() }, t("saved")).then((ok) => { if (ok && rename.saved(sent)) setEditing(false); });
   };
   const markDelivered = async () => {
     const ok = await confirm({ title: t("mark_delivered"), message: t("mark_delivered_msg"), confirmLabel: t("mark_delivered"), danger: false });

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
-import { CONTEXT_REQUEST, changedFields, rebaseDraft } from "../copilot-context.js";
+import { CONTEXT_REQUEST, changedFields, rebaseAfterSave, rebaseDraft, settleSave } from "../copilot-context.js";
 import { useApp } from "../context.js";
 import { useBusy } from "./ui.jsx";
 
@@ -51,6 +51,23 @@ export function useRebasedDraft(server) {
       return next.base === s.base && next.draft === s.draft ? s : next;
     });
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
-  const set = useCallback((field, value) => setState((s) => ({ ...s, draft: { ...s.draft, [field]: value } })), []);
-  return { draft: state.draft, base: state.base, set, changed: changedFields(state.base, state.draft) };
+  // The newest draft, also readable after an await (typing during a pending save lands here at once).
+  const latest = useRef(state.draft);
+  latest.current = state.draft;
+  const latestBase = useRef(state.base);
+  latestBase.current = state.base;
+  const set = useCallback((field, value) => {
+    latest.current = { ...latest.current, [field]: value };
+    setState((s) => ({ ...s, draft: { ...s.draft, [field]: value } }));
+  }, []);
+  // Call after a successful save with the draft snapshot that was sent. The sent values become the stored
+  // ones (a later draft stays pending on top of them); returns true only when nothing was typed since.
+  // `sent` is the `changed` snapshot taken before the request went out.
+  const saved = useCallback((sent) => {
+    const result = settleSave(latestBase.current, sent, latest.current);
+    latestBase.current = result.base;
+    setState((s) => ({ ...s, base: rebaseAfterSave(s.base, sent) }));
+    return result.close;
+  }, []);
+  return { draft: state.draft, base: state.base, set, saved, current: () => latest.current, changed: changedFields(state.base, state.draft) };
 }

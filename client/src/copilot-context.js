@@ -29,6 +29,24 @@ export function rebaseDraft(base, draft, server) {
   return { base: nextBase, draft: nextDraft };
 }
 
+// A save finished while the form was still open. It may close only if nothing was typed after the snapshot
+// that was sent; otherwise the later draft stays on screen (pending) so the user can save it again.
+export function shouldCloseAfterSave(sent, current) {
+  return Object.keys(sent).every((key) => JSON.stringify(sent[key]) === JSON.stringify(current?.[key]));
+}
+
+// After a save, the sent values are the new stored values: a later draft is then rebased onto them.
+export function rebaseAfterSave(base, sent) {
+  return { ...base, ...sent };
+}
+
+// A save of `sent` (the changed-fields snapshot taken before the request) succeeded and `current` is the draft now.
+// `base` is the new stored baseline; `close` is true only when no field differs from it any more.
+export function settleSave(base, sent, current) {
+  const next = rebaseAfterSave(base, sent);
+  return { base: next, close: shouldCloseAfterSave(sent, current) && Object.keys(changedFields(next, current)).length === 0 };
+}
+
 export function parseRoute(hash) {
   const [path, query = ""] = String(hash || "").replace(/^#\/?/, "").split("?");
   const parts = path.split("/").filter(Boolean).map((p) => {
@@ -108,14 +126,34 @@ export function publishView(extras, hash) {
   viewExtras = { ...extras, __hash: hash };
 }
 
+// An identity that only an editor snapshot claims (the object may have been deleted behind the open form) is
+// checked against the app's own data before it is named. Kinds without a native lookup are checked through
+// the trip they belong to when the snapshot says which one; otherwise there is nothing to check against.
+async function stillExists(form, call) {
+  try {
+    if (form.kind === "shipment") return !!shipmentObject(await call("shipment_get", { shipment: form.object_id }));
+    if (form.kind === "trip") return !!tripObject(await call("trip_get", { trip: form.object_id }));
+    if (form.trip_id) {
+      const detail = await call("trip_get", { trip: form.trip_id });
+      if (!tripObject(detail)) return false;
+      if (form.kind === "segment") return (detail.segments || []).some((s) => s.id === form.object_id);
+    }
+  } catch {
+    return false;
+  }
+  return true;
+}
+
 export async function buildContext({ hash, call, editor, extras = {} }) {
+  // Everything mutable is read before the first await.
   const route = parseRoute(hash);
+  const forms = editor ? (editor.forms || [editor]).slice() : [];
   const active_objects = await openObjects(route, call);
   // An editor on a stored object (a segment, an expense) names it too, so the assistant has its real id.
-  const forms = editor ? (editor.forms || [editor]) : [];
+  // Its fields stay in view.editor either way; only a confirmed object is claimed as active.
   for (const form of forms) {
     if (form && form.kind && form.object_id && !active_objects.some((o) => o.kind === form.kind && o.object_id === form.object_id)) {
-      active_objects.push({ kind: form.kind, object_id: form.object_id, title: form.title || form.object_id });
+      if (await stillExists(form, call)) active_objects.push({ kind: form.kind, object_id: form.object_id, title: form.title || form.object_id });
     }
   }
   const view = { page: route.page || "envios" };

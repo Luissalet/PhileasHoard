@@ -182,8 +182,12 @@ function ExpenseModal({ trip, people, expense, onClose, onSaved }) {
   }));
   const foreign = d.currency && d.currency.toUpperCase() !== trip.currency;
   const exactSum = people.reduce((n, p) => n + (Number(amounts[p.id]) || 0), 0);
+  const splitNow = useRef(null);
+  splitNow.current = splitKey();
   const submit = (e) => {
     e.preventDefault();
+    const sent = { ...form.changed };
+    const sentSplit = splitKey();
     run("save", async () => {
       let split = {};
       if (d.mode === "equal") split = who.size === people.length ? {} : { people: [...who] };
@@ -202,7 +206,10 @@ function ExpenseModal({ trip, people, expense, onClose, onSaved }) {
       } else await api.call("trip_expense_add", { trip: trip.id, ...body });
       notify(t("exp_saved"));
       await onSaved();
-      onClose();
+      // Anything typed (or toggled in the split) while the request was pending stays open, rebased onto what was saved.
+      splitAtOpen.current = sentSplit;
+      const settled = form.saved(sent);
+      if (settled && splitNow.current === sentSplit) onClose();
     });
   };
   const toggle = (id) => setWho((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -389,7 +396,11 @@ function RenameModal({ trip, onClose, onSaved }) {
   const title = form.draft.title;
   const setTitle = (value) => form.set("title", value);
   useContextProvider(() => ({ form: "trip_rename", mode: "edit", kind: "trip", object_id: trip.id, title: trip.title, fields: form.draft, changed: form.changed }));
-  const save = (value) => run("save", async () => { await api.call("trip_update", { trip: trip.id, title: value }); notify(t("trip_renamed")); await onSaved(); onClose(); });
+  // Typing that continues while the request is pending is kept (rebased onto the saved title): the modal only closes when nothing is left unsaved.
+  const save = (value) => {
+    const sent = { ...form.changed };
+    return run("save", async () => { await api.call("trip_update", { trip: trip.id, title: value }); notify(t("trip_renamed")); await onSaved(); if (form.saved(sent)) onClose(); });
+  };
   return (
     <Modal title={t("trip_rename")} onClose={onClose}>
       <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); save(title); }}>

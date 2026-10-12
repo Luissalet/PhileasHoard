@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  buildContext, changedFields, editorContext, mergeSnapshots, openObjects, parseRoute, publishView, rebaseDraft, requestRefresh,
+  buildContext, changedFields, editorContext, mergeSnapshots, openObjects, parseRoute, publishView, rebaseDraft, requestRefresh, settleSave, shouldCloseAfterSave,
   CONTEXT_REQUEST, REFRESH_EVENT,
 } from './src/copilot-context.js';
 
@@ -94,6 +94,54 @@ test('the context carries the open object, the page, the tab and the unsaved fie
   assert.deepEqual(creation.active_objects, []);
   assert.equal(creation.view.page, 'envios');
   assert.equal(creation.view.editor.fields.tracking_number, 'ZZ1');
+});
+
+test('typing during a pending save keeps the later draft and does not close', () => {
+  const base = { title: 'Lisbon' };
+  const sent = changedFields(base, { title: 'Submitted title A' }); // snapshot taken when Save was pressed
+  // nothing typed since: the saved values settle the form and it may close
+  const quiet = settleSave(base, sent, { title: 'Submitted title A' });
+  assert.equal(quiet.close, true);
+  // the user kept typing while the POST was pending: stay open, the later draft is pending on top of the saved title
+  const typed = { title: 'Later title B' };
+  const out = settleSave(base, sent, typed);
+  assert.equal(out.close, false);
+  assert.deepEqual(out.base, { title: 'Submitted title A' });
+  assert.deepEqual(changedFields(out.base, typed), { title: 'Later title B' });
+  // a field the user touched after the snapshot also keeps the form open
+  assert.equal(settleSave({ a: '1', b: '2' }, { a: 'x' }, { a: 'x', b: 'changed later' }).close, false);
+  // an untouched save (nothing changed, e.g. the auto title button) closes
+  assert.equal(settleSave(base, {}, base).close, true);
+  assert.equal(shouldCloseAfterSave({ title: 'A' }, { title: 'B' }), false);
+  assert.equal(shouldCloseAfterSave({ title: 'A' }, { title: 'A' }), true);
+});
+
+test('every save-then-close modal asks the draft before closing', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const read = (p) => readFile(new URL(p, import.meta.url), 'utf8');
+  const viaje = await read('./src/pages/Viaje.jsx');
+  const rename = viaje.slice(viaje.indexOf('function RenameModal'), viaje.indexOf('function MergeModal'));
+  const expense = viaje.slice(viaje.indexOf('function ExpenseModal'), viaje.indexOf('const toggle = (id)'));
+  const segment = await read('./src/components/travel.jsx');
+  const detalle = await read('./src/pages/Detalle.jsx');
+  for (const src of [rename, expense, segment, detalle]) assert.match(src, /\.saved\(sent\)/);
+  assert.equal(/await onSaved\(\);\s*onClose\(\);/.test(rename + expense + segment), false);
+});
+
+test('an editor snapshot of a deleted object names no active object but keeps its fields in view', async () => {
+  const editor = { form: 'shipment_edit', mode: 'edit', kind: 'shipment', object_id: 's_gone', title: 'Gone', fields: { notes: 'typed' }, changed: { notes: 'typed' } };
+  const call = fakeCall({}); // shipment_get / trip_get answer not found
+  const ctx = await buildContext({ hash: '#/envio/s_gone', call, editor });
+  assert.deepEqual(ctx.active_objects, []);
+  assert.deepEqual(ctx.view.editor, editor);
+  // still there: the snapshot identity is confirmed by the native lookup
+  const alive = await buildContext({ hash: '#/envios', call: fakeCall({ 'shipment_get:s_1': SHIPMENT }), editor: { ...editor, object_id: 's_1' } });
+  assert.deepEqual(alive.active_objects.map((o) => [o.kind, o.object_id]), [['shipment', 's_1']]);
+  // an expense or segment of a trip that no longer exists is not claimed either
+  const orphan = { form: 'segment', mode: 'edit', kind: 'segment', object_id: 'g_1', trip_id: 't_gone', fields: {} };
+  assert.deepEqual((await buildContext({ hash: '#/', call, editor: orphan })).active_objects, []);
+  const stale = await buildContext({ hash: '#/', call: fakeCall({ 'trip_get:t_1': TRIP }), editor: { ...orphan, object_id: 'g_zzz', trip_id: 't_1' } });
+  assert.deepEqual(stale.active_objects, []);
 });
 
 test('turn end refreshes once even if both the event and onTurnEnd arrive', () => {

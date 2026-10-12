@@ -217,6 +217,7 @@ export function SegmentEditor({ segment, trips = [], tripId = "", onClose, onSav
 
   const save = (e) => {
     e.preventDefault();
+    const sent = { ...form.changed };
     run("save", async () => {
       const keys = editing ? FIELDS.filter((k) => String(draft[k]) !== String(original[k])) : FIELDS.filter((k) => String(draft[k]) !== "" && !(k === "status" && draft[k] === "confirmed"));
       const args = {};
@@ -230,7 +231,8 @@ export function SegmentEditor({ segment, trips = [], tripId = "", onClose, onSav
         notify(t("seg_added"));
       }
       await onSaved();
-      onClose();
+      // Typing during the pending save stays open (rebased onto the saved values); close only when nothing is left.
+      if (form.saved(sent)) onClose();
     });
   };
   return (
