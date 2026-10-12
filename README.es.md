@@ -47,6 +47,16 @@ La interfaz viene compilada en `phileas_hoard/static`. Para recompilarla: `npm i
 
 En Ajustes → Correo va la carpeta de Faustus (o `PHILEAS_FAUSTUS_DIR`) y el origen del correo (`mail.source`); en Ajustes → Avisos, la entrega de avisos (`notify.via`) con un botón de prueba para el concentrador. Sin Faustus puedes pegar correos, añadir números a mano y usar todas las fuentes de transportistas.
 
+## Asistente de Faustus
+
+Con el lanzador compartido de Hoard Link instalado, la app muestra el panel de Faustus de la familia (un botón flotante). La conversación, el modelo y las herramientas viven en Faustus; esta app solo le dice al panel qué hay abierto.
+
+- **Contexto por vista.** Un envío abierto (`#/envio/<id>`) se envía como `shipment` con su id real, estado, transportista, número de seguimiento, tienda, artículo, referencia del pedido, país de origen, notas y marcas. El código de recogida nunca se envía. Un viaje abierto (`#/viaje/<id>`) se envía como `trip` con fechas, moneda, notas y hasta 40 tramos (id, tipo, etiqueta, estado). Las listas, los ajustes y las vistas de creación (`new`) no dan objeto.
+- **Campos sin guardar.** El panel los pide con el evento de ventana `phileas:context-request`. Los formularios abiertos responden con lo escrito hasta ahora: edición y renombrado de envío, renombrado y notas de viaje, tramo y gasto (`mode: new` o `edit`).
+- **Refresco.** Cuando el asistente termina un turno, la vista abierta se recarga en el sitio (`hoard:copilot-turn-end` / `window.hoardCopilot.onTurnEnd`). Lo que estás escribiendo conserva tu valor; lo que no has tocado sigue a los datos nuevos.
+- **Guardado.** Los formularios envían solo los campos que has cambiado a `shipment_update`, `trip_update`, `segment_update` y `trip_expense_update`, que fusionan solo esos campos; una cadena vacía borra un campo. No cambia ningún endpoint.
+- **Pruebas.** `node --test client/copilot-context.test.mjs` y `venv/Scripts/python -m pytest tests/test_partial_update.py`.
+
 ## Asistentes (MCP)
 
 `mcp_server.py` es un puente MCP por stdio. No abre la base de datos: pasa cada llamada a la app con el token de `data/mcp-token` y arranca la app si no responde. `faustus-plugin.json` describe la app, su comprobación de salud y el puente para Faustus y el Hoard Hub. Las herramientas y sus argumentos están en [docs/API.md](docs/API.md). Herramientas de viajes: `travel_overview`, `trips_list`, `trip_get`, `trip_create`, `trip_update` (renombrar, silenciar, cancelar, fusionar, separar, mover un tramo, borrar), `segment_add`, `segment_update`, `segment_delete`, `checkin_status`, `checkin_done`, `trip_documents_check`, `trip_people`, `trip_expenses`, `trip_expense_add`, `trip_expense_update`, `trip_expense_delete`, `trip_settle`, `trip_to_ledger`, `trip_ics`, `trip_paste`, `travel_mail_list`, `travel_mail_read_again`, `travel_mail_recheck`.
