@@ -506,4 +506,4 @@ def test_the_agenda_route_answers_the_hub_and_needs_the_token(client):
 
 def test_the_manifest_declares_the_agenda():
     manifest = json.loads((ROOT / "faustus-plugin.json").read_text(encoding="utf-8"))
-    assert manifest["x-family"] == {"agenda": True}
+    assert manifest["x-family"] == {"agenda": True, "copilot": True}
