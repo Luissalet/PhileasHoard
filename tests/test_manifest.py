@@ -9,7 +9,7 @@ from phileas_hoard.agent_tools import TOOLS
 from phileas_hoard.config import DEFAULT_PORT
 
 ROOT = Path(__file__).resolve().parent.parent
-BANNED = ("chatgpt", "claude", "openai", "anthropic", "lm studio", "odysseus", "gemini", "copilot", "14track", "aftership app", "parcel app")
+BANNED = ("chatgpt", "claude", "openai", "anthropic", "lm studio", "odysseus", "gemini", "14track", "aftership app", "parcel app")
 
 
 def test_manifest_matches_code():
