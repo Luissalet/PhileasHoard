@@ -4,6 +4,7 @@ import { useApp } from "../context.js";
 import { dayLabel, daysBetween, isoDate, locale, shortClock, windowLabel } from "../format.js";
 import { PROBLEM } from "../meta.js";
 import { Busy, Chip, Confidence, CopyButton, ExtLink, Icon, ICONS, Modal, Progress, StatusPill, Field, useBusy } from "./ui.jsx";
+import { useContextProvider } from "./hooks.js";
 
 // What to show as "when": { prefix, main, sub, late } — plus the carrier's time window on the day, when it gave one.
 export function etaInfo(s, today, t, lang) {
@@ -152,6 +153,7 @@ export function AddNumberModal({ onClose }) {
   const [busy, run] = useBusy();
   const [form, setForm] = useState({ tracking_number: "", carrier: "", label: "", merchant: "", notes: "" });
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  useContextProvider(() => ({ form: "shipment_new", mode: "new", fields: form, changed: Object.fromEntries(Object.entries(form).filter(([, v]) => v)) }));
   React.useEffect(() => { loadCarriers(); }, [loadCarriers]);
   const submit = (e) => {
     e.preventDefault();

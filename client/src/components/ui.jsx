@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../context.js";
+import { REFRESH_EVENT } from "../copilot-context.js";
 import { STATUS_META } from "../meta.js";
 import { clock, rel, safeUrl } from "../format.js";
 
@@ -229,6 +230,11 @@ export function useLoad(fn, deps) {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
+  // The assistant finished a turn: read again in place (no loading state, nothing remounts).
+  useEffect(() => {
+    window.addEventListener(REFRESH_EVENT, load);
+    return () => window.removeEventListener(REFRESH_EVENT, load);
+  }, [load]);
   return { ...state, reload: load };
 }
 

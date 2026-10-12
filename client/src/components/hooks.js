@@ -1,4 +1,6 @@
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
+import { CONTEXT_REQUEST, changedFields, rebaseDraft } from "../copilot-context.js";
 import { useApp } from "../context.js";
 import { useBusy } from "./ui.jsx";
 
@@ -21,4 +23,34 @@ export function useMailScan(onDone) {
     return r;
   });
   return [busy.scan, scan];
+}
+
+// An open form tells the assistant panel what it holds (unsaved fields included). `snapshot()` may return nothing.
+export function useContextProvider(snapshot, active = true) {
+  const latest = useRef(snapshot);
+  latest.current = snapshot;
+  useEffect(() => {
+    if (!active) return undefined;
+    const answer = (event) => {
+      const value = latest.current();
+      if (value) event.detail.provide(value);
+    };
+    window.addEventListener(CONTEXT_REQUEST, answer);
+    return () => window.removeEventListener(CONTEXT_REQUEST, answer);
+  }, [active]);
+}
+
+// Form state that survives refreshes: untouched fields follow the stored object (an assistant edit shows up),
+// edited ones stay as typed. `changed` is what differs from what was loaded, to send on save.
+export function useRebasedDraft(server) {
+  const [state, setState] = useState(() => ({ base: server, draft: server }));
+  const key = JSON.stringify(server);
+  useEffect(() => {
+    setState((s) => {
+      const next = rebaseDraft(s.base, s.draft, server);
+      return next.base === s.base && next.draft === s.draft ? s : next;
+    });
+  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+  const set = useCallback((field, value) => setState((s) => ({ ...s, draft: { ...s.draft, [field]: value } })), []);
+  return { draft: state.draft, base: state.base, set, changed: changedFields(state.base, state.draft) };
 }

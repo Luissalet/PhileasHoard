@@ -3,6 +3,7 @@ import { api } from "../api.js";
 import { useApp } from "../context.js";
 import { dayLabel, isoDate, locale, money, shortClock, windowLabel } from "../format.js";
 import { Busy, Chip, ExtLink, Field, Icon, Modal, useBusy } from "./ui.jsx";
+import { useContextProvider, useRebasedDraft } from "./hooks.js";
 
 export const KINDS = ["flight", "train", "bus", "ferry", "car", "lodging", "event"];
 export const CATEGORIES = ["transport", "lodging", "food", "activities", "shopping", "other"];
@@ -196,10 +197,17 @@ export function SegmentEditor({ segment, trips = [], tripId = "", onClose, onSav
   const { t, notify } = useApp();
   const [busy, run] = useBusy();
   const editing = !!segment;
-  const original = useMemo(() => (segment ? fromSegment(segment) : blank()), [segment]);
-  const [draft, setDraft] = useState(original);
+  // A refresh (the assistant edited this segment) updates untouched fields; typed ones stay.
+  const form = useRebasedDraft(useMemo(() => (segment ? fromSegment(segment) : blank()), [segment]));
+  const draft = form.draft;
+  const original = form.base;
+  const set = form.set;
   const [trip, setTrip] = useState(tripId);
-  const set = (key, value) => setDraft((d) => ({ ...d, [key]: value }));
+  useContextProvider(() => ({
+    form: "segment", mode: editing ? "edit" : "new", ...(editing ? { kind: "segment", object_id: segment.id, title: segment.label } : {}),
+    ...(trip ? { trip_id: trip } : {}), fields: draft,
+    changed: editing ? form.changed : Object.fromEntries(FIELDS.filter((k) => String(draft[k]) !== "" && !(k === "status" && draft[k] === "confirmed")).map((k) => [k, draft[k]])),
+  }));
   const kind = draft.kind;
   const transport = kind === "flight" || kind === "train" || kind === "bus" || kind === "ferry";
   const stay = kind === "lodging";
@@ -287,6 +295,7 @@ export function PasteModal({ trips = [], tripId = "", onClose, onDone }) {
   const [text, setText] = useState("");
   const [trip, setTrip] = useState(tripId);
   const [result, setResult] = useState(null);
+  useContextProvider(() => ({ form: "trip_paste", mode: "new", ...(trip ? { trip_id: trip } : {}), fields: { subject, from_address: from, text: text.slice(0, 4000) }, changed: {} }));
   const submit = (e) => {
     e.preventDefault();
     run("paste", async () => {
@@ -340,6 +349,7 @@ export function NewTripModal({ onClose }) {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [currency, setCurrency] = useState("EUR");
+  useContextProvider(() => ({ form: "trip_new", mode: "new", fields: { title, start_date: start, end_date: end, currency }, changed: {} }));
   const submit = (e) => {
     e.preventDefault();
     run("create", async () => {
