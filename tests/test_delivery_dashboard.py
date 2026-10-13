@@ -36,6 +36,19 @@ def test_tracking_note_and_iso_window(clock):
     assert find_eta("Estimated arrival: 2026-02-30", date(2026, 10, 1))[:2] == (None, None)
 
 
+def test_shop_order_with_colon_and_dispatch_with_domain_share_one_card(svc, clock):
+    common = {"ts": clock(), "from_address": "updates@clientes.carrefour.com", "from_name": "Atención al Cliente", "links": []}
+    ordered = {**common, "message_id": "shop-order", "subject": "Confirmación de pedido: 76510000", "text": "Hemos recibido tu pedido."}
+    dispatched = {**common, "message_id": "shop-dispatch", "ts": clock() + 60,
+                  "subject": "Tu pedido en Carrefour de Juego de cartas y 1 artículo más, ha sido enviado.",
+                  "text": "Tu pedido de carrefour.es número 76510000 ha salido del almacén."}
+    assert analyze(ordered).order_ref == analyze(dispatched).order_ref == "76510000"
+    out = svc.engine.ingest([ordered, dispatched])
+    assert out["created"] == 1 and out["linked"] == 1
+    s = svc.dashboard()["active"][0]
+    assert s["merchant"] == "Carrefour" and s["label"] == "Juego de cartas y 1 artículo más" and s["status"] == "in_transit"
+
+
 def test_consolidated_delivery_closes_all_named_goods_only(svc, clock):
     names = ["Cable LAN Cat 6A rojo", "Estuche de viaje rigido", "Premium cable gris"]
     ships = [parcel(svc, clock, n, f"406-0000000-{i:07}", f"OLD{i}") for i, n in enumerate(names)]

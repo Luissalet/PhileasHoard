@@ -31,6 +31,7 @@ MERCHANTS = {  # domain suffix -> display name
     "elcorteingles.es": "El Corte Inglés", "mediamarkt.es": "MediaMarkt", "fnac.es": "Fnac", "zalando.es": "Zalando",
     "decathlon.es": "Decathlon", "ikea.com": "IKEA", "apple.com": "Apple", "game.es": "GAME", "carrefour.es": "Carrefour",
     "vinted.es": "Vinted", "ebay.es": "eBay", "ebay.com": "eBay", "miravia.es": "Miravia", "xiaomi.com": "Xiaomi",
+    "carrefour.com": "Carrefour",
 }
 SENDER_MERCHANT = {"googlestore-noreply@google.com": "Google Store", "store-noreply@google.com": "Google Store"}
 CARRIER_SENDERS = {"ups.com": "ups", "dhl.com": "dhl", "dhl.de": "dhl", "correos.es": "correos", "inpost.es": "inpost", "seur.com": "seur",
@@ -86,7 +87,7 @@ ORDER_PATTERNS = [
     re.compile(r"\b(\d{3}-\d{7}-\d{7})\b"),                                                    # Amazon
     re.compile(r"\b(GS\.\d{4}-\d{4}-\d{4})\b"),                                                # Google Store
     re.compile(r"pedido\s*\(?\s*(?:n[uú]mero|n\.?\s*[ºo°])\s*[«\"']?\s*([A-Z0-9][A-Z0-9\-]{3,24})", re.I),
-    re.compile(r"pedido\s+([0-9]{5,12})\b", re.I),
+    re.compile(r"\bpedido(?:\s+de\s+[A-Za-z0-9.-]+)?\s*(?:n[uú]mero|n\.?\s*[ºo°])?\s*[:#]?\s*([0-9]{5,12})\b", re.I),
     re.compile(r"(?:order|bestellung|commande)\s*(?:number|no\.?|n[ºo°]|#|nummer|num[eé]ro)?\s*[:#]?\s*([A-Z]{0,3}[0-9][A-Z0-9\-]{4,24})", re.I),
     re.compile(r"(?:n[uú]mero de pedido|referencia(?: del pedido)?|ref\.?)\s*[:#]?\s*([A-Z0-9][A-Z0-9\-\.]{4,24})", re.I),
 ]
@@ -362,6 +363,10 @@ def find_item(subject: str, text: str, merchant: str) -> str:
         item = m.group(1).strip().rstrip(".").rstrip("…").strip()
         more = re.search(r"y (\d+) productos? m[aá]s", subject or "", re.I)
         return item + (f" (+{more.group(1)})" if more else "")
+    if merchant:
+        m = re.search(r"^(?:tu|su) pedido en " + re.escape(merchant) + r" de (.{3,200}?),\s*(?:ha sido|se ha) enviado[.!]?$", subject or "", re.I)
+        if m and not has_price(m.group(1)):
+            return m.group(1).strip()
     lines = [ln.strip() for ln in clean_text(text).splitlines() if ln.strip()]
     for i in range(1, len(lines)):
         if not re.fullmatch(r"\d{1,5}[.,]\d{2}\s*€|€\s*\d{1,5}[.,]\d{2}", lines[i]):
