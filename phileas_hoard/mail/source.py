@@ -47,6 +47,12 @@ GMAIL_QUERY = ("seguimiento OR enviado OR envío OR \"en camino\" OR reparto OR 
 TRAVEL_GMAIL = ("OR reserva OR reservation OR booking OR billete OR itinerary OR itinerario OR localizador OR \"tarjeta de embarque\" "
                 "OR \"boarding pass\" OR vuelo OR flight OR hotel OR e-ticket")
 
+# Reconciliation only needs delivery confirmations and tracking notes. Keep the
+# Gmail expression ASCII so IMAP can send X-GM-RAW instead of a slow broad fallback.
+RECONCILE_TERMS = ["entregado", "delivered", "seguimiento", "tracking", "note", "nota", "zugestellt", "consegnato", "bezorgd", "livre"]
+RECONCILE_GMAIL = ('subject:entregado OR subject:delivered OR subject:zugestellt OR subject:livre OR subject:consegnato '
+                   'OR subject:bezorgd OR "tracking number" OR "numero de seguimiento" OR subject:note OR subject:nota')
+
 
 class _RunnerHelper:
     """A helper that answers through ``runner(request, timeout) -> dict`` (tests use a fake mailbox)."""
@@ -161,11 +167,15 @@ class MailSource:
         self.router.claim({"hub_id": hub_id}, ref, kind=kind)
 
     # ------------------------------------------------------------------ scanning
-    def scan(self, *, since_days: int, limit: int, skip: list[str], query: str = "", travel: bool = False, deep: bool = False) -> dict[str, Any]:
+    def scan(self, *, since_days: int, limit: int, skip: list[str], query: str = "", travel: bool = False, deep: bool = False,
+             reprocess: bool = False) -> dict[str, Any]:
         """``{ok, error, accounts, messages, via: "hub" | "faustus", more}``; a hub that cannot answer falls back to the helper in ``auto``."""
         self._travel = bool(travel)
         terms = interest_spec(travel)["subject_terms"]
         gmail = GMAIL_QUERY + (" " + TRAVEL_GMAIL if travel else "")
+        if reprocess and not query:
+            terms = list(RECONCILE_TERMS)
+            gmail = RECONCILE_GMAIL
         answer = self.router.scan_ex(since_days=int(since_days), limit=int(limit), skip=skip, query=query, deep=deep, fields=HUB_FIELDS,
                                      subject_terms=terms, gmail_query=gmail)
         return {"ok": bool(answer.get("ok")), "error": str(answer.get("error") or ""), "accounts": answer.get("accounts") or [],

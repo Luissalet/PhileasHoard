@@ -132,7 +132,22 @@ def test_reprocess_known_mail_repairs_existing_parcel_without_duplicates(svc, cl
     out = svc.engine.scan_mail(since_days=120, reprocess=True)
     assert out["created"] == 0 and svc.store.shipment(s["id"])["status"] == "delivered"
     assert fake_mail.calls[-1]["skip"] == 0
+    assert fake_mail.calls[-1]["reprocess"] is True
     assert len(svc.store.shipments(archived=None, history_only=None)) == 1
+
+
+def test_reconciliation_search_is_focused_ascii_and_preserves_explicit_queries():
+    from phileas_hoard.mail.source import MailSource, RECONCILE_GMAIL, RECONCILE_TERMS
+    calls = []
+    source = MailSource(settings_get=lambda key, default=None: "faustus" if key == "mail.source" else default,
+                        runner=lambda request, timeout: calls.append(request) or {"ok": True, "messages": [], "accounts": []})
+    source.scan(since_days=120, limit=800, skip=[], deep=True, travel=True, reprocess=True)
+    assert calls[-1]["gmail_query"] == RECONCILE_GMAIL and RECONCILE_GMAIL.isascii()
+    assert calls[-1]["subject_terms"] == RECONCILE_TERMS
+    assert all(term.isascii() for term in calls[-1]["subject_terms"])
+    assert "reserva" not in calls[-1]["subject_terms"] and "order" not in calls[-1]["subject_terms"]
+    source.scan(since_days=120, limit=800, skip=[], deep=True, query="Shop reference", reprocess=True)
+    assert calls[-1]["query"] == "Shop reference"
 
 
 def test_received_during_running_check_keeps_receipt(svc, clock, monkeypatch):

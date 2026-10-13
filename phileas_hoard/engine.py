@@ -84,7 +84,7 @@ class Engine:
         if self.mail is None:
             return {"ok": False, "error": "no mail source"}
         first = self.setting("mail.first_scan_done", "0") != "1"
-        repair = not first and self.setting("mail.parser_revision", "") != "delivery-2"
+        repair = not first and self.setting("mail.parser_revision", "") != "delivery-3-focused"
         reprocess = reprocess or repair
         days = since_days or int(self.setting("mail.first_days", "120") if first else self.setting("mail.window_days", "14"))
         if repair and not since_days:
@@ -92,7 +92,8 @@ class Engine:
         limit = limit or (800 if first or reprocess else 150)
         t0 = time.monotonic()
         answer = self.mail.scan(since_days=days, limit=limit, skip=[] if reprocess else self.store.known_message_ids(), query=query,
-                                 travel=bool(self.travel is not None and self.travel.cfg().enabled), deep=bool(since_days or query or reprocess))
+                                 travel=bool(self.travel is not None and self.travel.cfg().enabled), deep=bool(since_days or query or reprocess),
+                                 reprocess=reprocess)
         if not answer.get("ok"):
             self.store.add_run("mail", "", False, int((time.monotonic() - t0) * 1000), str(answer.get("error") or "mail failed"))
             self.set("mail.last_error", str(answer.get("error") or "mail failed")[:300])
@@ -106,7 +107,7 @@ class Engine:
         self.set("mail.last_scan_ts", str(self.clock()))
         self.set("mail.last_error", "")
         if not answer.get("more"):
-            self.set("mail.parser_revision", "delivery-2")
+            self.set("mail.parser_revision", "delivery-3-focused")
         detail = f"{len(messages)} new mails, {summary['shipping']} shipping, {summary['created']} new shipments, {summary['linked']} updates"
         if summary.get("travel"):
             detail += f", {summary['travel']} travel"
