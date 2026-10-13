@@ -260,6 +260,10 @@ class Engine:
             value = unicodedata.normalize("NFKD", value or "")
             return re.sub(r"[^a-z0-9]+", " ", "".join(c for c in value.lower() if not unicodedata.combining(c))).strip()
 
+        def title_of(s: dict[str, Any]) -> str:
+            raw = re.sub(r"\s*\(\+\d+\)\s*$", "", s.get("item") or s.get("label") or "")
+            return folded(raw)
+
         ts = float(message.get("ts") or self.clock())
         pool = self.store.recent_for(merchant=facts.merchant, since_ts=ts - 30 * DAY) if facts.merchant else []
         pool = [s for s in pool if (s.get("shipped_ts") or s.get("created_ts") or 0) <= ts + 60]
@@ -274,13 +278,18 @@ class Engine:
                 result[hit["id"]] = hit
         content = folded("\n".join([str(message.get("text") or ""), str(message.get("subject") or ""),
                                     *(str(i.get("alt") or "") for i in message.get("images") or [])]))
+        named = {title_of(s) for s in pool if len(title_of(s)) >= 12 and
+                 re.search(r"(?<!\w)" + re.escape(title_of(s)) + r"(?!\w)", content)}
         # A consolidated notice lists the other goods as well as its headline item.
         for s in pool:
-            title = folded(s.get("item") or s.get("label") or "")
-            title = re.sub(r" \d+$", "", title) if "(+" in (s.get("item") or "") else title
-            if len(title) < 12 or title == folded(facts.merchant) or title not in content:
+            title = title_of(s)
+            if title not in named or title == folded(facts.merchant):
                 continue
-            matches = [x for x in pool if folded(x.get("item") or x.get("label") or "") == title]
+            # A more specific named product is not evidence for a different parcel
+            # whose abbreviated title is its prefix (e.g. Cable LAN / Cable LAN red).
+            if any(other.startswith(title + " ") for other in named if other != title):
+                continue
+            matches = [x for x in pool if title_of(x) == title]
             if len(matches) == 1:
                 result[s["id"]] = s
         if not result and facts.order_ref:
