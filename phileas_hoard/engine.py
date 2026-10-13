@@ -287,8 +287,16 @@ class Engine:
                 continue
             # A more specific named product is not evidence for a different parcel
             # whose abbreviated title is its prefix (e.g. Cable LAN / Cable LAN red).
-            if any(other.startswith(title + " ") for other in named if other != title):
-                continue
+            longer = sorted((other for other in named if other.startswith(title + " ")), key=len, reverse=True)
+            if longer:
+                # Both products may be listed independently. Ignore the short
+                # phrase inside longer names, but keep a separate occurrence.
+                separate = folded("\n".join([str(message.get("text") or ""),
+                                              *(str(i.get("alt") or "") for i in message.get("images") or [])]))
+                for other in longer:
+                    separate = re.sub(r"(?<!\w)" + re.escape(other) + r"(?!\w)", " ", separate)
+                if not re.search(r"(?<!\w)" + re.escape(title) + r"(?!\w)", separate):
+                    continue
             matches = [x for x in pool if title_of(x) == title]
             if len(matches) == 1:
                 result[s["id"]] = s

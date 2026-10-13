@@ -83,6 +83,15 @@ def test_named_specific_product_does_not_deliver_other_prefix(svc, clock):
     assert svc.store.shipment(b["id"])["status"] == "in_transit"
 
 
+def test_consolidated_delivery_naming_both_prefix_products_closes_both(svc, clock):
+    a = parcel(svc, clock, "Cable LAN Cat6A rojo", "406-0000000-0000001", "A")
+    b = parcel(svc, clock, "Cable LAN Cat6A", "406-0000000-0000002", "B")
+    m = delivery(clock, [a["item"], b["item"]], ref=a["order_ref"], sub="NEW")
+    svc.engine.ingest([m])
+    assert svc.store.shipment(a["id"])["status"] == "delivered"
+    assert svc.store.shipment(b["id"])["status"] == "delivered"
+
+
 def test_received_clears_only_its_alerts_is_idempotent_and_reversible(svc, clock):
     a = parcel(svc, clock, "Tijeras de peluqueria", "406-0000000-0000001")
     b = parcel(svc, clock, "Cable de red largo", "406-0000000-0000002")
