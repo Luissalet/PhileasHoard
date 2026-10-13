@@ -102,7 +102,7 @@ _MONTH_RX = "|".join(sorted(MONTHS, key=len, reverse=True))
 _DAYMONTH = rf"(\d{{1,2}})\s*(?:de\s+)?({_MONTH_RX})\.?(?:\s+(?:de\s+)?(\d{{4}}))?"
 _MONTHDAY = rf"({_MONTH_RX})\.?\s+(\d{{1,2}})(?:,?\s+(\d{{4}}))?"
 ETA_LEAD = (r"(?:llega(?:r[aá])?|se entrega(?:r[aá])?|se entraga|entrega (?:estimada|prevista)|fecha (?:estimada |prevista )?de entrega|"
-            r"entrega entre|recibir[aá]s|arriv(?:es|ing)|estimated delivery|expected delivery|delivery (?:date|estimate)|voraussichtliche zustellung)")
+            r"entrega entre|recibir[aá]s|arriv(?:es|ing)|estimated arrival|estimated delivery|expected delivery|delivery (?:date|estimate)|voraussichtliche zustellung)")
 
 
 def _fold(text: str) -> str:
@@ -192,6 +192,9 @@ def carrier_from_phrases(text: str) -> str:
 
 
 def _status_from(text: str) -> tuple[str, str]:
+    negative = re.search(r"no (?:se ha |ha sido |hemos )?(?:entregad[oa]|podido entregar)|(?:not|could not be|wasn't) delivered", text, re.I)
+    if negative:
+        return FAILED_ATTEMPT, negative.group(0)
     for status, rx in _STATUS_RE:
         m = rx.search(text)
         if m:
@@ -244,6 +247,15 @@ def find_eta(text: str, ref: date) -> tuple[Optional[date], Optional[date], str]
     folded = re.sub(r"[\u2010\u2011\u2012\u2013\u2014\u2212]", "-", _fold(clean_text(text)))
     rel = r"(hoy|manana|pasado manana|today|tomorrow|lunes|martes|miercoles|jueves|viernes|sabado|domingo|monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
     lead = _fold(ETA_LEAD)
+    # Shops also put an ISO date window in a table, on the line after its heading.
+    m = re.search(lead + r"\s*:?\s*(\d{4}-\d{2}-\d{2})(?:\s*(?:-|to|a)\s*(\d{4}-\d{2}-\d{2}))?", folded)
+    if m:
+        try:
+            a = date.fromisoformat(m.group(1))
+            b = date.fromisoformat(m.group(2) or m.group(1))
+            return min(a, b), max(a, b), m.group(0)
+        except ValueError:
+            pass
     # window "21 de ago - 24 de ago" / "entre el 3 y el 5 de octubre"
     m = re.search(lead + r"[^\n\d]{0,30}?" + _DAYMONTH + r"\s*(?:-|a|al|hasta|y el|y)\s*" + _DAYMONTH, folded)
     if m:
@@ -456,6 +468,9 @@ def analyze(message: dict[str, Any]) -> MailFacts:
     status, phrase = _status_from(_fold(subject))
     if not status:
         status, phrase = _status_from(_fold(_headline(text, 600)))
+    if not status and facts.numbers:
+        # A tracking note proves a label exists, not that the carrier collected it.
+        status, phrase = LABEL_CREATED, "tracking number supplied"
     facts.status, facts.status_phrase = status, phrase
     if status:
         score += 3
@@ -469,6 +484,9 @@ def analyze(message: dict[str, Any]) -> MailFacts:
         score += 1
 
     facts.order_ref = find_order(text, subject)
+    if status == DELIVERED and facts.order_ref:
+        score += 1
+        reasons.append("delivery notice with an order reference")
     if facts.merchant == "Amazon":
         facts.sub_ref = _amazon_sub_ref(links)
         if facts.sub_ref or "progress-tracker" in " ".join(str(l.get("url")) for l in links):
@@ -482,6 +500,9 @@ def analyze(message: dict[str, Any]) -> MailFacts:
     if status == AVAILABLE_FOR_PICKUP or re.search(r"recog", subject, re.I):
         facts.pickup_code, facts.pickup_place, facts.pickup_deadline = find_pickup(text, ref)
     facts.item = find_item(subject, text, facts.merchant)
+    if status == DELIVERED and facts.item and _suffix_match(domain, MERCHANTS):
+        score += 1
+        reasons.append("delivery notice naming goods from a known shop")
     facts.price, facts.currency = find_price(text)
     # Survey mails after delivery still say "entregado": they confirm, they do not create.
     if re.search(r"cu[eé]ntanos|opini[oó]n|valora|survey|how did we do", subject, re.I) and status == DELIVERED:

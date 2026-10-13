@@ -75,6 +75,7 @@ class MergeArgs(BaseModel):
 class ScanArgs(BaseModel):
     since_days: Optional[int] = Field(None, ge=1, le=730, description="How far back to read (default: the configured window).")
     query: str = Field("", max_length=200, description="Optional search, e.g. a shop name or a tracking number.")
+    reprocess: bool = Field(False, description="Re-read previously scanned messages to reconcile missed deliveries without duplicating parcels.")
 
 
 class HistoryRepairArgs(BaseModel):
@@ -168,6 +169,18 @@ def run_update(svc: Services, a: UpdateArgs) -> dict[str, Any]:
     return {"shipment": svc.edit(a.shipment, a.model_dump(exclude={"shipment"}, exclude_none=True))}
 
 
+def run_received(svc: Services, a: ShipmentRef) -> dict[str, Any]:
+    s = svc.store.find_shipment(a.shipment)
+    out = svc.engine.mark_received(s["id"])
+    return {**out, "shipment": svc.card(out["shipment"])}
+
+
+def run_reopen(svc: Services, a: ShipmentRef) -> dict[str, Any]:
+    s = svc.store.find_shipment(a.shipment)
+    out = svc.engine.reopen_received(s["id"])
+    return {**out, "shipment": svc.card(out["shipment"])}
+
+
 def run_delete(svc: Services, a: DeleteArgs) -> dict[str, Any]:
     s = svc.store.find_shipment(a.shipment)
     _confirm(a.confirm, f"shipment {s['label']}")
@@ -203,8 +216,8 @@ def run_eta(svc: Services, a: ShipmentRef) -> dict[str, Any]:
 
 
 def run_scan(svc: Services, a: ScanArgs) -> dict[str, Any]:
-    if a.since_days or a.query:
-        result = svc.engine.scan_mail(since_days=a.since_days, query=a.query)
+    if a.since_days or a.query or a.reprocess:
+        result = svc.engine.scan_mail(since_days=a.since_days, query=a.query, reprocess=a.reprocess)
     else:
         result = svc.scheduler.run_now("mail", "", timeout=300)
     return result if isinstance(result, dict) else {"result": result}
@@ -334,6 +347,10 @@ TOOLS: list[Tool] = [
          "Sinónimos: renombrar, silenciar avisos, archivar, marcar como entregado.", UpdateArgs, _ann(False, idempotent=True), run_update),
     Tool("shipment_delete", "Delete a shipment and its events (confirm=true). Borrar envío.",
          DeleteArgs, _ann(False, destructive=True), run_delete),
+    Tool("shipment_received", "Mark received: stop tracking, clear its alerts and keep it in history. Recibido.",
+         ShipmentRef, _ann(False, idempotent=True), run_received),
+    Tool("shipment_reopen", "Undo a manual receipt and resume its previous status. Volver a seguir.",
+         ShipmentRef, _ann(False, idempotent=True), run_reopen),
     Tool("shipment_merge", "Merge two shipments that are the same parcel (confirm=true). Fusionar envíos duplicados.",
          MergeArgs, _ann(False, destructive=True), run_merge),
     Tool("shipment_refresh", "Ask the carrier now for one shipment. Comprobar ya un envío.\n"

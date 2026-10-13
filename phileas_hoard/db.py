@@ -257,6 +257,15 @@ MIGRATIONS: list[str] = [
       ts REAL NOT NULL
     );
     """,
+    # 4: one delivery email can confirm several parcels.
+    """
+    CREATE TABLE shipment_mails (
+      shipment_id TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+      message_id TEXT NOT NULL REFERENCES mails(message_id) ON DELETE CASCADE,
+      PRIMARY KEY(shipment_id, message_id)
+    );
+    INSERT INTO shipment_mails SELECT shipment_id, message_id FROM mails WHERE shipment_id IS NOT NULL;
+    """,
 ]
 
 

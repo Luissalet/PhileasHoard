@@ -148,6 +148,7 @@ class Store:
     def merge_into(self, keep: str, drop: str) -> dict[str, Any]:
         """Move events and mails of ``drop`` onto ``keep`` and delete ``drop``."""
         with self.db.transaction() as conn:
+            conn.execute("INSERT OR IGNORE INTO shipment_mails SELECT ?, message_id FROM shipment_mails WHERE shipment_id = ?", (keep, drop))
             conn.execute("UPDATE OR IGNORE events SET shipment_id = ? WHERE shipment_id = ?", (keep, drop))
             conn.execute("DELETE FROM events WHERE shipment_id = ?", (drop,))
             conn.execute("UPDATE mails SET shipment_id = ? WHERE shipment_id = ?", (keep, drop))
@@ -193,12 +194,15 @@ class Store:
             (message.get("message_id"), message.get("ts"), message.get("from_address") or "", message.get("from_name") or "",
              message.get("subject") or "", message.get("account") or "", kind, score, json.dumps(facts, ensure_ascii=False, default=str),
              shipment_id, state, snippet, self.clock()))
+        for sid in set([shipment_id, *(facts.get("shipment_ids") or [])]) - {None, ""}:
+            self.db.execute("INSERT OR IGNORE INTO shipment_mails(shipment_id, message_id) VALUES (?, ?)", (sid, message.get("message_id")))
 
     def set_mail_state(self, message_id: str, state: str, shipment_id: Optional[str] = None) -> None:
         if shipment_id is None:
             self.db.execute("UPDATE mails SET state = ? WHERE message_id = ?", (state, message_id))
         else:
             self.db.execute("UPDATE mails SET state = ?, shipment_id = ? WHERE message_id = ?", (state, shipment_id, message_id))
+            self.db.execute("INSERT OR IGNORE INTO shipment_mails(shipment_id, message_id) VALUES (?, ?)", (shipment_id, message_id))
 
     def mails(self, *, kind: Optional[Iterable[str]] = None, state: Optional[Iterable[str]] = None, shipment_id: str = "",
               limit: int = 100) -> list[dict[str, Any]]:
@@ -212,8 +216,8 @@ class Store:
             sql += f" AND state IN ({', '.join('?' for _ in state)})"
             params.extend(state)
         if shipment_id:
-            sql += " AND shipment_id = ?"
-            params.append(shipment_id)
+            sql += " AND (shipment_id = ? OR message_id IN (SELECT message_id FROM shipment_mails WHERE shipment_id = ?))"
+            params.extend([shipment_id, shipment_id])
         sql += " ORDER BY ts DESC LIMIT ?"
         params.append(max(1, min(limit, 2000)))
         out = []
@@ -250,6 +254,9 @@ class Store:
 
     def mark_notifications_seen(self, before: float) -> int:
         return self.db.execute("UPDATE notifications SET seen = 1 WHERE seen = 0 AND ts <= ?", (before,)).rowcount
+
+    def mark_shipment_notifications_seen(self, sid: str) -> int:
+        return self.db.execute("UPDATE notifications SET seen = 1 WHERE seen = 0 AND shipment_id = ?", (sid,)).rowcount
 
     def add_run(self, kind: str, ref: str, ok: bool, duration_ms: int, detail: str) -> None:
         self.db.execute("INSERT INTO runs(ts, kind, ref, ok, duration_ms, detail) VALUES (?, ?, ?, ?, ?, ?)",

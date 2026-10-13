@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import { useApp } from "../context.js";
-import { AddNumberModal, CompactRow, ShipmentCard, attentionReason } from "../components/cards.jsx";
+import { AddNumberModal, ShipmentCard } from "../components/cards.jsx";
 import { useMailScan } from "../components/hooks.js";
-import { Busy, Chip, Empty, ErrorBox, Icon, ICONS, Rel, Section, StatusPill } from "../components/ui.jsx";
+import { Busy, Chip, Empty, ErrorBox, Icon, ICONS, Rel, Section } from "../components/ui.jsx";
 import { clock, dayLabel } from "../format.js";
 
 function NewsList({ items, onClear }) {
@@ -53,6 +53,18 @@ function SourcesLine({ dash }) {
 export default function Envios() {
   const { t, lang, dash, dashError, refreshDash } = useApp();
   const [adding, setAdding] = useState(false);
+  const [view, setView] = useState("all");
+  const [reconciling, setReconciling] = useState(false);
+  const { notify, toastError } = useApp();
+  const reconcile = async () => {
+    setReconciling(true);
+    try {
+      await api.call("mail_scan", { since_days: 120, reprocess: true });
+      await refreshDash();
+      notify(t("reconciliation_done"));
+    } catch (error) { toastError(error); }
+    finally { setReconciling(false); }
+  };
   const [scanning, scan] = useMailScan();
   const [newsShown, setNewsShown] = useState([]);
   const visited = useRef(false);
@@ -80,7 +92,10 @@ export default function Envios() {
   const attention = dash.attention || [];
   const delivered = dash.delivered || [];
   const review = dash.counts?.mails_review || 0;
-  const empty = !active.length && !delivered.length;
+  const empty = !active.length;
+  const hasHistory = !!(dash.counts?.delivered || dash.counts?.history || dash.counts?.archived);
+  const visible = view === "today" ? today : view === "attention" ? attention : active;
+  const activeIds = new Set(active.map((s) => s.id));
 
   return (
     <div className="space-y-6">
@@ -110,14 +125,15 @@ export default function Envios() {
         </div>
       )}
 
-      {newsShown.length > 0 && <NewsList items={newsShown} onClear={() => setNewsShown([])} />}
+
 
       {empty && (
         <Empty>
           <div className="mx-auto max-w-[520px] space-y-2 py-4 text-left">
-            <h2 style={{ color: "var(--ink)" }}>{t("empty_title")}</h2>
-            <p>{t("empty_body")}</p>
+            <h2 style={{ color: "var(--ink)" }}>{t(hasHistory ? "no_active_title" : "empty_title")}</h2>
+            <p>{t(hasHistory ? "no_active_body" : "empty_body")}</p>
             <div className="flex flex-wrap gap-2 pt-2">
+              {hasHistory && <a className="btn" href="#/historial">{t("see_history")}</a>}
               <Busy className="btn" busy={scanning} onClick={() => scan()}>{t("read_mail_now")}</Busy>
               <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>{t("add_number")}</button>
               <a className="btn" href="#/ajustes">{t("nav_settings")}</a>
@@ -126,44 +142,23 @@ export default function Envios() {
         </Empty>
       )}
 
-      {today.length > 0 && (
-        <Section id="sec-today" title={t("sec_today")} count={today.length}>
-          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">{today.map((s) => <CompactRow key={s.id} shipment={s} />)}</div>
-        </Section>
-      )}
-
-      {attention.length > 0 && (
-        <Section id="sec-attention" title={t("sec_attention")} count={attention.length}>
-          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">{attention.map((s) => <CompactRow key={s.id} shipment={s} reason={attentionReason(s, t)} />)}</div>
-        </Section>
-      )}
-
       {active.length > 0 && (
-        <Section id="sec-active" title={t("sec_active")} count={active.length}>
-          <div className="card-grid">{active.map((s) => <ShipmentCard key={s.id} shipment={s} onChanged={refreshDash} />)}</div>
+        <Section id="sec-active" title={t("sec_active")} count={active.length} actions={<a href="#/historial" className="btn btn-sm">{t("see_history")}</a>}>
+          <div className="flex flex-wrap gap-2 mb-3" role="group" aria-label={t("filter")}>
+            {[["all", t("filter_all"), active.length], ["today", t("sec_today"), today.length], ["attention", t("sec_attention"), attention.length]].map(([key, label, count]) => (
+              <button type="button" key={key} aria-pressed={view === key} className={`btn btn-sm ${view === key ? "btn-primary" : ""}`} onClick={() => setView(key)}>{label} · {count}</button>
+            ))}
+          </div>
+          {visible.length ? <div className="card-grid">{visible.map((s) => <ShipmentCard key={s.id} shipment={s} />)}</div> : <Empty>{t("history_empty")}</Empty>}
         </Section>
       )}
 
-      {delivered.length > 0 && (
-        <details className="panel">
-          <summary className="flex flex-wrap items-center gap-2 font-semibold">
-            {t("sec_delivered")} <span className="chip">{delivered.length}</span>
-          </summary>
-          <div className="mt-2 overflow-x-auto">
-            <table>
-              <tbody>
-                {delivered.map((s) => (
-                  <tr key={s.id}>
-                    <td><a href={`#/envio/${encodeURIComponent(s.id)}`}>{s.label || s.item || s.tracking_number}</a><div className="help">{[s.merchant, s.carrier_name].filter(Boolean).join(" · ")}</div></td>
-                    <td className="r">{s.delivered_ts ? dayLabel(new Date(s.delivered_ts * 1000), lang) : ""}</td>
-                    <td className="r"><StatusPill status={s.status} label={s.status_label} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </details>
-      )}
+      {newsShown.some((n) => !n.shipment_id || activeIds.has(n.shipment_id)) && <NewsList items={newsShown.filter((n) => !n.shipment_id || activeIds.has(n.shipment_id))} onClear={async () => { await api.visit(); setNewsShown([]); await refreshDash(); }} />}
+
+      <div className="flex flex-wrap gap-3 items-center">
+        <a href="#/historial" className="btn">{t("see_history")}{delivered.length ? ` · ${delivered.length} ${t("sec_delivered").toLowerCase()}` : ""}</a>
+        <Busy className="btn" busy={reconciling} onClick={reconcile}>{t("reconcile_deliveries")}</Busy>
+      </div>
 
       <SourcesLine dash={dash} />
       {adding && <AddNumberModal onClose={() => setAdding(false)} />}

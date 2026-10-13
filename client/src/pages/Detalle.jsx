@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { api } from "../api.js";
 import { useApp } from "../context.js";
-import { Eta, TrackingNumber, useRefresh } from "../components/cards.jsx";
+import { Eta, ReceivedButton, TrackingNumber, useRefresh } from "../components/cards.jsx";
 import { Busy, Chip, Confidence, CopyButton, Empty, ErrorBox, ExtLink, Field, Icon, ICONS, Progress, Rel, Section, StatusPill, useBusy, useLoad } from "../components/ui.jsx";
 import { useContextProvider, useRebasedDraft } from "../components/hooks.js";
 import { clock, dayLabel, shortClock, windowLabel } from "../format.js";
@@ -30,10 +30,6 @@ function Header({ s, onChanged }) {
     const sent = { ...rename.changed };
     // Closes only after a successful save and when nothing was typed since the snapshot that was sent.
     update("label", { label: label.trim() }, t("saved")).then((ok) => { if (ok && rename.saved(sent)) setEditing(false); });
-  };
-  const markDelivered = async () => {
-    const ok = await confirm({ title: t("mark_delivered"), message: t("mark_delivered_msg"), confirmLabel: t("mark_delivered"), danger: false });
-    if (ok) update("delivered", { status: "delivered" }, t("saved"));
   };
   const remove = async () => {
     const ok = await confirm({ title: t("delete_shipment"), message: t("delete_shipment_msg", { name: s.label || s.tracking_number }), confirmLabel: t("delete") });
@@ -81,7 +77,7 @@ function Header({ s, onChanged }) {
         <ExtLink href={link} className="btn"><Icon d={ICONS.external} size={14} />{t("open_tracking")}</ExtLink>
         <Busy className="btn" busy={busy.mute} onClick={() => update("mute", { muted: !s.muted })}><Icon d={s.muted ? ICONS.bell : ICONS.bellOff} size={14} />{s.muted ? t("unmute") : t("mute")}</Busy>
         <Busy className="btn" busy={busy.archive} onClick={() => update("archive", { archived: !s.archived }, t("saved"))}><Icon d={ICONS.archive} size={14} />{s.archived ? t("unarchive") : t("archive")}</Busy>
-        {s.status !== "delivered" && <Busy className="btn" busy={busy.delivered} onClick={markDelivered}><Icon d={ICONS.check} size={14} />{t("mark_delivered")}</Busy>}
+        {(s.status !== "delivered" || s.received_ts) && <ReceivedButton shipment={s} onChanged={onChanged} className="btn btn-primary" />}
         <Busy className="btn btn-danger" busy={busy.delete} onClick={remove}><Icon d={ICONS.trash} size={14} />{t("delete")}</Busy>
       </div>
       {s.mail_only && <p className="help">{t("mail_only")}</p>}

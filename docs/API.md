@@ -96,6 +96,26 @@ Annotations: destructiveHint.
 | `shipment` (string) | yes |  |
 | `confirm` (boolean) | no |  |
 
+## `shipment_received`
+
+Mark received: stop tracking, clear its alerts and keep it in history. Recibido.
+
+Annotations: idempotentHint.
+
+| Argument | Required | Description |
+|---|---|---|
+| `shipment` (string) | yes | Shipment id (s_…), tracking number or order number. |
+
+## `shipment_reopen`
+
+Undo a manual receipt and resume its previous status. Volver a seguir.
+
+Annotations: idempotentHint.
+
+| Argument | Required | Description |
+|---|---|---|
+| `shipment` (string) | yes | Shipment id (s_…), tracking number or order number. |
+
 ## `shipment_merge`
 
 Merge two shipments that are the same parcel (confirm=true). Fusionar envíos duplicados.
@@ -144,6 +164,7 @@ Annotations: idempotentHint, openWorldHint.
 |---|---|---|
 | `since_days` (integer/null) | no | How far back to read (default: the configured window). |
 | `query` (string) | no | Optional search, e.g. a shop name or a tracking number. |
+| `reprocess` (boolean) | no | Re-read previously scanned messages to reconcile missed deliveries without duplicating parcels. |
 
 ## `shipments_history_repair`
 

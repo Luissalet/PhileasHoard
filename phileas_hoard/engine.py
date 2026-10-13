@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import logging
 import time
+import re
+import unicodedata
 from datetime import date, datetime, timedelta
 from typing import Any, Callable, Optional
 
@@ -78,27 +80,33 @@ class Engine:
         return datetime.fromtimestamp(self.clock()).date()
 
     # ================================================================== mail
-    def scan_mail(self, *, since_days: Optional[int] = None, query: str = "", limit: int = 0) -> dict[str, Any]:
+    def scan_mail(self, *, since_days: Optional[int] = None, query: str = "", limit: int = 0, reprocess: bool = False) -> dict[str, Any]:
         if self.mail is None:
             return {"ok": False, "error": "no mail source"}
         first = self.setting("mail.first_scan_done", "0") != "1"
+        repair = not first and self.setting("mail.parser_revision", "") != "delivery-2"
+        reprocess = reprocess or repair
         days = since_days or int(self.setting("mail.first_days", "120") if first else self.setting("mail.window_days", "14"))
-        limit = limit or (800 if first else 150)
+        if repair and not since_days:
+            days = int(self.setting("mail.first_days", "120"))
+        limit = limit or (800 if first or reprocess else 150)
         t0 = time.monotonic()
-        answer = self.mail.scan(since_days=days, limit=limit, skip=self.store.known_message_ids(), query=query,
-                                 travel=bool(self.travel is not None and self.travel.cfg().enabled), deep=bool(since_days or query))
+        answer = self.mail.scan(since_days=days, limit=limit, skip=[] if reprocess else self.store.known_message_ids(), query=query,
+                                 travel=bool(self.travel is not None and self.travel.cfg().enabled), deep=bool(since_days or query or reprocess))
         if not answer.get("ok"):
             self.store.add_run("mail", "", False, int((time.monotonic() - t0) * 1000), str(answer.get("error") or "mail failed"))
             self.set("mail.last_error", str(answer.get("error") or "mail failed")[:300])
             return {"ok": False, "error": answer.get("error") or "mail failed", "accounts": answer.get("accounts") or []}
         messages = answer.get("messages") or []
-        summary = self.ingest(messages, bootstrap=first)
+        summary = self.ingest(messages, bootstrap=first, reprocess=reprocess)
         self._after_hub_read(messages)
         if first:
             self.finish_bootstrap()
             self.set("mail.first_scan_done", "1")
         self.set("mail.last_scan_ts", str(self.clock()))
         self.set("mail.last_error", "")
+        if not answer.get("more"):
+            self.set("mail.parser_revision", "delivery-2")
         detail = f"{len(messages)} new mails, {summary['shipping']} shipping, {summary['created']} new shipments, {summary['linked']} updates"
         if summary.get("travel"):
             detail += f", {summary['travel']} travel"
@@ -133,7 +141,7 @@ class Engine:
         except Exception:  # noqa: BLE001
             log.exception("hub mail claims failed")
 
-    def ingest(self, messages: list[dict[str, Any]], *, bootstrap: bool = False, force: bool = False) -> dict[str, Any]:
+    def ingest(self, messages: list[dict[str, Any]], *, bootstrap: bool = False, force: bool = False, reprocess: bool = False) -> dict[str, Any]:
         """Analyze and file messages, oldest first so statuses build up in order."""
         out = {"shipping": 0, "maybe": 0, "noise": 0, "created": 0, "linked": 0, "shipments": [], "travel": 0, "trips": []}
         known = set(self.store.known_message_ids(20000))
@@ -142,7 +150,10 @@ class Engine:
             self.travel.begin_batch()
         for message in sorted(messages, key=lambda m: m.get("ts") or 0):
             mid = str(message.get("message_id") or "")
-            if not mid or mid in known:
+            if not mid or (mid in known and not reprocess):
+                continue
+            previous = self.store.mail(mid) if mid in known else None
+            if previous and (previous["kind"] == "travel" or previous["state"] == "ignored"):
                 continue
             known.add(mid)
             facts = analyze(message)
@@ -159,25 +170,37 @@ class Engine:
                     continue
             out[facts.kind] += 1
             sid, created = None, False
+            linked_ids = []
             if facts.kind == "shipping":
                 old_mail = bootstrap or self._older_than_live(message)
-                sid, created = self._file(message, facts, bootstrap=old_mail)
+                targets = self._delivery_targets(facts, message) if facts.status == DELIVERED else []
+                if targets:
+                    for target in targets:
+                        self.store.add_event(target["id"], ts=float(message.get("ts") or self.clock()), status=DELIVERED,
+                                             description=str(message.get("subject") or "")[:300], source="mail", key=f"mail|{mid}")
+                        self.apply_status(target["id"], DELIVERED, float(message.get("ts") or self.clock()), source="mail",
+                                          text=str(message.get("subject") or ""), quiet=old_mail or bool(previous), events=not bootstrap, message_id=mid)
+                        linked_ids.append(target["id"])
+                    sid = linked_ids[0]
+                else:
+                    sid, created = self._file(message, facts, bootstrap=old_mail, existing_id=(previous or {}).get("shipment_id"))
                 if sid and old_mail and not bootstrap:
                     quiet_ids.add(sid)
                     self._settle_if_stale(sid)               # an old mail found by a deep scan never makes an active parcel
                 if sid:
                     out["created" if created else "linked"] += 1
-                    if sid not in out["shipments"]:
-                        out["shipments"].append(sid)
+                    for linked in linked_ids or [sid]:
+                        if linked not in out["shipments"]:
+                            out["shipments"].append(linked)
             state = "linked" if sid else ("review" if facts.kind == "maybe" else "skipped")
             if facts.kind == "maybe":
                 state = "new"
-            self.store.save_mail(message, kind=facts.kind, score=facts.score, facts=facts.to_dict(), shipment_id=sid, state=state)
+            self.store.save_mail(message, kind=facts.kind, score=facts.score, facts={**facts.to_dict(), "shipment_ids": linked_ids}, shipment_id=sid, state=state)
         if self.travel is not None and out["trips"]:
             out["trips"] = self.travel.existing_trips(out["trips"])
         for sid in out["shipments"]:
             try:
-                self.recompute_eta(sid, quiet=bootstrap or sid in quiet_ids)
+                self.recompute_eta(sid, quiet=bootstrap or reprocess or sid in quiet_ids)
             except Exception:  # noqa: BLE001
                 log.exception("eta failed for %s", sid)
         return out
@@ -226,9 +249,49 @@ class Engine:
             return pool[0]
         return None
 
-    def _file(self, message: dict[str, Any], facts: Any, *, bootstrap: bool) -> tuple[Optional[str], bool]:
+    def _delivery_targets(self, facts: Any, message: dict[str, Any]) -> list[dict[str, Any]]:
+        """Amazon may consolidate products and change package IDs in a delivery email.
+
+        Exact tracking/package IDs win; otherwise require a unique product match
+        in the notice or a unique parcel of its explicit order. Never close all
+        parcels of a split order just because one was delivered.
+        """
+        def folded(value: str) -> str:
+            value = unicodedata.normalize("NFKD", value or "")
+            return re.sub(r"[^a-z0-9]+", " ", "".join(c for c in value.lower() if not unicodedata.combining(c))).strip()
+
         ts = float(message.get("ts") or self.clock())
-        shipment = self._match(facts, message)
+        pool = self.store.recent_for(merchant=facts.merchant, since_ts=ts - 30 * DAY) if facts.merchant else []
+        pool = [s for s in pool if (s.get("shipped_ts") or s.get("created_ts") or 0) <= ts + 60]
+        result = {}
+        for n in facts.numbers:
+            hit = self.store.by_number(n["number"])
+            if hit:
+                result[hit["id"]] = hit
+        if facts.sub_ref:
+            hit = self.store.by_sub_ref(facts.merchant, facts.sub_ref)
+            if hit:
+                result[hit["id"]] = hit
+        content = folded("\n".join([str(message.get("text") or ""), str(message.get("subject") or ""),
+                                    *(str(i.get("alt") or "") for i in message.get("images") or [])]))
+        # A consolidated notice lists the other goods as well as its headline item.
+        for s in pool:
+            title = folded(s.get("item") or s.get("label") or "")
+            title = re.sub(r" \d+$", "", title) if "(+" in (s.get("item") or "") else title
+            if len(title) < 12 or title == folded(facts.merchant) or title not in content:
+                continue
+            matches = [x for x in pool if folded(x.get("item") or x.get("label") or "") == title]
+            if len(matches) == 1:
+                result[s["id"]] = s
+        if not result and facts.order_ref:
+            same = self.store.by_order(facts.merchant, facts.order_ref)
+            if len(same) == 1 and not facts.sub_ref:
+                result[same[0]["id"]] = same[0]
+        return list(result.values())
+
+    def _file(self, message: dict[str, Any], facts: Any, *, bootstrap: bool, existing_id: Optional[str] = None) -> tuple[Optional[str], bool]:
+        ts = float(message.get("ts") or self.clock())
+        shipment = self.store.shipment(existing_id) if existing_id else self._match(facts, message)
         created = False
         if shipment is None:
             if facts.status == DELIVERED and not facts.numbers and not facts.order_ref:
@@ -241,11 +304,13 @@ class Engine:
             shipment = self.store.create_shipment(
                 label=label[:120], item=facts.item[:200], merchant=facts.merchant, merchant_domain=facts.merchant_domain,
                 order_ref=facts.order_ref, sub_ref=facts.sub_ref, carrier=carrier or "", dest_country="ES",
-                tracking_number=(number or {}).get("number", ""), tracking_url=numbers.tracking_url(carrier, (number or {}).get("number", "")),
+                tracking_number=(number or {}).get("number", ""), tracking_url=(facts.tracking_link if number and carrier == "dpd" else numbers.tracking_url(carrier, (number or {}).get("number", ""))),
                 merchant_url=facts.tracking_link, status=UNKNOWN, source="mail", history_only=bootstrap, created_ts=ts)
             self.store.update_shipment(shipment["id"], last_change_ts=ts)
             created = True
         sid = shipment["id"]
+        if (shipment.get("extra") or {}).get("received_ts"):
+            return sid, created
         updates: dict[str, Any] = {}
         if facts.item and not shipment.get("item"):
             updates["item"] = facts.item[:200]
@@ -270,6 +335,8 @@ class Engine:
             updates["carrier"] = facts.carrier
         if facts.tracking_link and not shipment.get("merchant_url"):
             updates["merchant_url"] = facts.tracking_link
+        if facts.tracking_link and (facts.carrier or shipment.get("carrier")) == "dpd":
+            updates["tracking_url"] = facts.tracking_link
         if facts.eta_from:
             updates.update(merchant_eta_from=facts.eta_from, merchant_eta_to=facts.eta_to or facts.eta_from, merchant_eta_text=facts.eta_text[:120])
             if not shipment.get("merchant_eta_first"):
@@ -421,6 +488,8 @@ class Engine:
         """``quiet`` silences the notifications; ``events`` (default on) lets the family bus hear about a real change. Neither a parcel that
         belongs to the history nor the first status a new parcel gets is an event."""
         s = self.store.shipment(sid)
+        if source != "manual" and (s.get("extra") or {}).get("received_ts"):
+            return False
         current = s.get("status") or UNKNOWN
         cur_ts = s.get("status_ts") or 0
         if not status or status == UNKNOWN:
@@ -453,6 +522,8 @@ class Engine:
         if status == DELIVERED:
             updates["delivered_ts"] = ts
             updates["delivered_assumed"] = False
+        if status in FINAL:
+            updates["next_check_ts"] = None
         self.store.update_shipment(sid, **updates)
         if status != current and not quiet:
             self._notify_status(self.store.shipment(sid), current, status)
@@ -498,63 +569,70 @@ class Engine:
     # ================================================================== carriers
     def refresh(self, sid: str, *, reason: str = "schedule") -> dict[str, Any]:
         s = self.store.shipment(sid)
+        if (s.get("extra") or {}).get("received_ts"):
+            return {"ok": True, "changed": False, "stopped": True, "shipment": s}
         if not s.get("tracking_number"):
             return {"ok": False, "error": "no tracking number: this parcel is followed from the shop's mails", "shipment": s}
         t0 = time.monotonic()
         raw_path = (self.raw_dir / f"{sid}.json") if self.raw_dir is not None else None
         result, attempts = self.carriers.track(s.get("carrier") or "", s["tracking_number"], raw_path=raw_path)
-        now = self.clock()
-        updates: dict[str, Any] = {"last_check_ts": now, "check_count": (s.get("check_count") or 0) + 1}
-        changed = False
-        if result.ok:
-            updates.update(fail_count=0, last_error="")
-            added = 0
-            for ev in sorted(result.events, key=lambda e: e.ts):
-                if self.store.add_event(sid, ts=ev.ts, status=ev.status, description=ev.description, location=ev.location, source="carrier",
-                                        key="c|" + ev.key()):
-                    added += 1
-            if result.events:
-                first_scan = min((e.ts for e in result.events if e.status not in (LABEL_CREATED, NOT_FOUND)), default=None)
-                if first_scan and not s.get("first_scan_ts"):
-                    updates["first_scan_ts"] = first_scan
-                last = max(result.events, key=lambda e: e.ts)
-                updates["last_location"] = last.location or s.get("last_location") or ""
-                updates["last_change_ts"] = max(last.ts, s.get("last_change_ts") or 0)
-            extra = dict(s.get("extra") or {})
-            if (result.eta_time or "") != extra.get("eta_time", ""):
-                extra["eta_time"] = result.eta_time or ""
-                updates["extra"] = extra
-            if result.eta_from:
-                updates.update(carrier_eta_from=result.eta_from, carrier_eta_to=result.eta_to or result.eta_from)
-                if not s.get("carrier_eta_first"):
-                    updates["carrier_eta_first"] = result.eta_from
-            for key in ("origin_country", "origin_city", "dest_country", "service"):
-                value = getattr(result, key)
-                if value and (not s.get(key) or (key == "service" and value != s.get(key))):
-                    updates[key] = value
-            if result.carrier and result.carrier != s.get("carrier"):
-                updates["carrier"] = result.carrier
-            self.store.update_shipment(sid, **updates)
-            status_ts = max((e.ts for e in result.events), default=now)
-            if result.status == DELIVERED and result.delivered_ts:
-                status_ts = result.delivered_ts
-            changed = self.apply_status(sid, result.status, status_ts, source=result.source, text=result.status_text) or added > 0
-            first_scan = bool(updates.get("first_scan_ts") and not s.get("first_scan_ts"))
-        else:
-            first_scan = False
-            updates.update(fail_count=(s.get("fail_count") or 0) + 1, last_error=result.error[:300])
-            self.store.update_shipment(sid, **updates)
-        s = self.store.shipment(sid)
-        self.store.update_shipment(sid, next_check_ts=self.next_check(s, result))
-        self.recompute_eta(sid, quiet=first_scan)
-        fresh = self.store.shipment(sid)
-        if (first_scan and not fresh.get("muted") and not fresh.get("history_only") and fresh["status"] not in FINAL
-                and fresh["status"] not in (OUT_FOR_DELIVERY, AVAILABLE_FOR_PICKUP)):
-            self.notify(fresh, N_STATUS, "medium", self._t("scanned_title", fresh), self._t("scanned_body", fresh), dedupe=f"{sid}|first_scan")
-        self.store.add_run("check", sid, result.ok, int((time.monotonic() - t0) * 1000),
-                           f"{result.source}: {result.status}" + (f" ({result.error})" if result.error else "") + f" via {reason}")
-        return {"ok": result.ok, "changed": changed, "source": result.source, "status": result.status, "error": result.error,
-                "attempts": attempts, "shipment": self.store.shipment(sid)}
+        with self.store.db.transaction():
+            # A check already running when Received was clicked must not overwrite its receipt.
+            fresh = self.store.shipment(sid)
+            if (fresh.get("extra") or {}).get("received_ts"):
+                return {"ok": True, "changed": False, "stopped": True, "shipment": fresh}
+            now = self.clock()
+            updates: dict[str, Any] = {"last_check_ts": now, "check_count": (s.get("check_count") or 0) + 1}
+            changed = False
+            if result.ok:
+                updates.update(fail_count=0, last_error="")
+                added = 0
+                for ev in sorted(result.events, key=lambda e: e.ts):
+                    if self.store.add_event(sid, ts=ev.ts, status=ev.status, description=ev.description, location=ev.location, source="carrier",
+                                            key="c|" + ev.key()):
+                        added += 1
+                if result.events:
+                    first_scan = min((e.ts for e in result.events if e.status not in (LABEL_CREATED, NOT_FOUND)), default=None)
+                    if first_scan and not s.get("first_scan_ts"):
+                        updates["first_scan_ts"] = first_scan
+                    last = max(result.events, key=lambda e: e.ts)
+                    updates["last_location"] = last.location or s.get("last_location") or ""
+                    updates["last_change_ts"] = max(last.ts, s.get("last_change_ts") or 0)
+                extra = dict(s.get("extra") or {})
+                if (result.eta_time or "") != extra.get("eta_time", ""):
+                    extra["eta_time"] = result.eta_time or ""
+                    updates["extra"] = extra
+                if result.eta_from:
+                    updates.update(carrier_eta_from=result.eta_from, carrier_eta_to=result.eta_to or result.eta_from)
+                    if not s.get("carrier_eta_first"):
+                        updates["carrier_eta_first"] = result.eta_from
+                for key in ("origin_country", "origin_city", "dest_country", "service"):
+                    value = getattr(result, key)
+                    if value and (not s.get(key) or (key == "service" and value != s.get(key))):
+                        updates[key] = value
+                if result.carrier and result.carrier != s.get("carrier"):
+                    updates["carrier"] = result.carrier
+                self.store.update_shipment(sid, **updates)
+                status_ts = max((e.ts for e in result.events), default=now)
+                if result.status == DELIVERED and result.delivered_ts:
+                    status_ts = result.delivered_ts
+                changed = self.apply_status(sid, result.status, status_ts, source=result.source, text=result.status_text) or added > 0
+                first_scan = bool(updates.get("first_scan_ts") and not s.get("first_scan_ts"))
+            else:
+                first_scan = False
+                updates.update(fail_count=(s.get("fail_count") or 0) + 1, last_error=result.error[:300])
+                self.store.update_shipment(sid, **updates)
+            s = self.store.shipment(sid)
+            self.store.update_shipment(sid, next_check_ts=self.next_check(s, result))
+            self.recompute_eta(sid, quiet=first_scan)
+            fresh = self.store.shipment(sid)
+            if (first_scan and not fresh.get("muted") and not fresh.get("history_only") and fresh["status"] not in FINAL
+                    and fresh["status"] not in (OUT_FOR_DELIVERY, AVAILABLE_FOR_PICKUP)):
+                self.notify(fresh, N_STATUS, "medium", self._t("scanned_title", fresh), self._t("scanned_body", fresh), dedupe=f"{sid}|first_scan")
+            self.store.add_run("check", sid, result.ok, int((time.monotonic() - t0) * 1000),
+                               f"{result.source}: {result.status}" + (f" ({result.error})" if result.error else "") + f" via {reason}")
+            return {"ok": result.ok, "changed": changed, "source": result.source, "status": result.status, "error": result.error,
+                    "attempts": attempts, "shipment": self.store.shipment(sid)}
 
     def next_check(self, s: dict[str, Any], result: Any = None) -> Optional[float]:
         now = self.clock()
@@ -655,6 +733,8 @@ class Engine:
 
     # ================================================================== notifications
     def notify(self, s: dict[str, Any], type_: str, severity: str, title: str, body: str, *, dedupe: str) -> bool:
+        if (self.store.shipment(s["id"]).get("extra") or {}).get("received_ts"):
+            return False
         if self.store.notified(dedupe):
             return False
         url = s.get("tracking_url") or s.get("merchant_url") or ""
@@ -668,6 +748,36 @@ class Engine:
             results = [{"channel": "all", "ok": False, "error": type(exc).__name__}]
         self.store.add_notification(shipment_id=s["id"], type_=type_, severity=severity, title=title, body=body, results=results, dedupe=dedupe)
         return True
+
+    def mark_received(self, sid: str) -> dict[str, Any]:
+        now = self.clock()
+        with self.store.db.transaction():
+            s = self.store.shipment(sid)
+            extra = dict(s.get("extra") or {})
+            changed = not extra.get("received_ts")
+            if changed:
+                extra["before_received"] = {k: s.get(k) for k in ("status", "status_ts", "status_text", "status_source", "delivered_ts", "delivered_assumed")}
+                extra["received_ts"] = now
+                self.store.update_shipment(sid, status=DELIVERED, status_ts=now, status_text="Recibido", status_source="manual",
+                                           delivered_ts=now, delivered_assumed=False, next_check_ts=None, last_error="", extra=extra)
+                self.store.add_event(sid, ts=now, status=DELIVERED, description="Recibido", source="manual", key=f"received|{now}")
+            marked = self.store.mark_shipment_notifications_seen(sid)
+            self.recompute_eta(sid, quiet=True)
+        if changed and s["status"] != DELIVERED:
+            self._emit_shipment("phileas.shipment.delivered", self.store.shipment(sid), delivered_at=now)
+        return {"shipment": self.store.shipment(sid), "changed": changed, "marked_seen": marked}
+
+    def reopen_received(self, sid: str) -> dict[str, Any]:
+        with self.store.db.transaction():
+            s = self.store.shipment(sid)
+            extra = dict(s.get("extra") or {})
+            before = extra.pop("before_received", None)
+            extra.pop("received_ts", None)
+            if not before:
+                return {"shipment": s, "changed": False}
+            self.store.update_shipment(sid, **before, extra=extra, next_check_ts=None)
+            self.recompute_eta(sid, quiet=True)
+        return {"shipment": self.store.shipment(sid), "changed": True}
 
     def _t(self, key: str, s: dict[str, Any], **kw: Any) -> str:
         es = self.lang() == "es"

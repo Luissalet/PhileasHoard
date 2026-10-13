@@ -63,6 +63,16 @@ const D = {
   score: ["puntos", "score"],
   confidence: ["Confianza", "Confidence"],
   eta: ["Llegada", "Arrival"],
+  received: ["Recibido", "Received"],
+  receipt_saved: ["Recibido. Seguimiento cerrado; guardado en el historial.", "Received. Tracking stopped; saved in history."],
+  receipt_reopen: ["Volver a seguir", "Resume tracking"],
+  receipt_reopened: ["Seguimiento reanudado", "Tracking resumed"],
+  tracking_details: ["Seguimiento y estimación", "Tracking and estimate"],
+  reconcile_deliveries: ["Revisar entregas anteriores", "Review past deliveries"],
+  reconciliation_done: ["Correos revisados; entregas actualizadas", "Messages reviewed; deliveries updated"],
+  see_history: ["Ver historial", "View history"],
+  no_active_title: ["No hay envíos en camino", "No shipments on the way"],
+  no_active_body: ["Los envíos recibidos y archivados están en el historial.", "Received and archived shipments are in history."],
 
   // vocabulary
   parcel: ["Paquete", "Parcel"],

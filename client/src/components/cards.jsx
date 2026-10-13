@@ -81,6 +81,18 @@ export function TrackingNumber({ shipment }) {
   );
 }
 
+export function ReceivedButton({ shipment: s, onChanged, className = "btn btn-sm btn-primary" }) {
+  const { t, notify, refreshDash } = useApp();
+  const [busy, run] = useBusy();
+  const received = () => run("received", async () => {
+    await api.call(s.received_ts ? "shipment_reopen" : "shipment_received", { shipment: s.id });
+    notify(t(s.received_ts ? "receipt_reopened" : "receipt_saved"));
+    await refreshDash();
+    await onChanged?.();
+  });
+  return <Busy className={className} busy={busy.received} onClick={received}><Icon d={ICONS.check} size={14} />{t(s.received_ts ? "receipt_reopen" : "received")}</Busy>;
+}
+
 export function ShipmentCard({ shipment: s, onChanged }) {
   const { t, lang } = useApp();
   const [refreshing, refresh] = useRefresh(s, onChanged);
@@ -90,33 +102,39 @@ export function ShipmentCard({ shipment: s, onChanged }) {
   const lastLine = [s.last_location, s.status_text].filter(Boolean).join(" · ");
   return (
     <article className={`panel ship ${s.late || problem ? "card-late" : ""}`} aria-label={s.label || s.tracking_number}>
-      <div className="flex items-start gap-3">
+      <div className="shipment-summary">
         <div className="min-w-0 flex-1">
-          <h3 className="clamp2" style={{ fontSize: 14 }}>
+          <h3 className="clamp2 shipment-title">
             <a href={`#/envio/${encodeURIComponent(s.id)}`} style={{ color: "inherit", textDecoration: "none" }}>{s.label || s.item || s.tracking_number || t("parcel")}</a>
           </h3>
           <div className="help trunc">{[s.merchant, s.carrier_name].filter(Boolean).join(" · ") || "—"}</div>
-          <TrackingNumber shipment={s} />
         </div>
-        <Eta shipment={s} className="text-right" />
+        <Eta shipment={s} />
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <StatusPill status={s.status} label={s.status_label} />
         {s.late && <Chip className="chip-danger">{t("late")}</Chip>}
         {s.muted && <Chip title={t("muted_hint")}><Icon d={ICONS.bellOff} size={12} />{t("muted")}</Chip>}
-        <span className="ml-auto"><Confidence value={s.eta_confidence} /></span>
       </div>
-      <Progress value={s.progress} />
-      {lastLine && <p className="clamp2" style={{ fontSize: 12.5 }} title={lastLine}>{lastLine}{s.status_ts ? <span className="help"> · {shortClock(s.status_ts, lang)}</span> : null}</p>}
-      {basis && <p className="help clamp2" title={basis.text}>{basis.text}</p>}
-      {s.last_error && <p className="clamp2" style={{ color: "var(--hoard-danger)", fontSize: 12 }} title={s.last_error}>{s.last_error}</p>}
       <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
+        <ReceivedButton shipment={s} onChanged={onChanged} />
+        <a className="btn btn-sm" href={`#/envio/${encodeURIComponent(s.id)}`}>{t("detail")}</a>
+        <ExtLink href={link}><Icon d={ICONS.external} size={13} />{t("open_tracking")}</ExtLink>
+      </div>
+      <details className="shipment-tracking">
+        <summary>{t("tracking_details")}</summary>
+        <div className="space-y-2 pt-2">
+          <TrackingNumber shipment={s} />
+          <Progress value={s.progress} />
+          <Confidence value={s.eta_confidence} />
+          {lastLine && <p className="help">{lastLine}{s.status_ts ? ` · ${shortClock(s.status_ts, lang)}` : ""}</p>}
+          {basis && <p className="help">{basis.text}</p>}
+          {s.last_error && <p className="help" style={{ color: "var(--hoard-danger)" }}>{s.last_error}</p>}
         {s.mail_only
           ? <span className="help">{t("mail_only")}</span>
-          : <Busy className="btn btn-sm btn-primary" busy={refreshing} onClick={refresh}><Icon d={ICONS.refresh} size={13} />{t("check_now")}</Busy>}
-        <ExtLink href={link}><Icon d={ICONS.external} size={13} />{t("open_tracking")}</ExtLink>
-        <a className="btn btn-sm" href={`#/envio/${encodeURIComponent(s.id)}`}>{t("detail")}</a>
-      </div>
+          : <Busy className="btn btn-sm" busy={refreshing} onClick={refresh}><Icon d={ICONS.refresh} size={13} />{t("check_now")}</Busy>}
+        </div>
+      </details>
     </article>
   );
 }

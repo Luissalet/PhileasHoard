@@ -274,7 +274,7 @@ class Services:
                                           "service", "created_ts", "last_change_ts", "notes", "source", "fail_count")},
                 "carrier_name": numbers.carrier_name(s.get("carrier") or ""), "status_label": status_label(s.get("status") or UNKNOWN, lang),
                 "progress": progress(s.get("status") or UNKNOWN), "late": bool(extra.get("late")), "eta_time": extra.get("eta_time") or "", "days_left": extra.get("days_left"),
-                "eta_basis": (s.get("eta_basis") or [])[:3], "mail_only": not s.get("tracking_number")}
+                "eta_basis": (s.get("eta_basis") or [])[:3], "mail_only": not s.get("tracking_number"), "received_ts": extra.get("received_ts")}
 
     def detail(self, sid: str) -> dict[str, Any]:
         s = self.store.find_shipment(sid)
@@ -305,7 +305,7 @@ class Services:
         delivered = [self.card(s) for s in self.store.shipments(archived=None, history_only=False, active=False, limit=40)
                      if s.get("delivered_ts") and date.fromtimestamp(s["delivered_ts"]).isoformat() >= week]
         last_visit = float(self.db.get_setting("dashboard.last_visit_ts", "0") or 0)
-        news = [n for n in self.store.notifications(limit=30) if n["ts"] > last_visit]
+        news = [n for n in self.store.notifications(unseen=True, limit=30) if n["ts"] > last_visit]
         return {"now": now, "today": today, "active": active, "today_list": today_list, "attention": attention, "delivered": delivered,
                 "news": news, "last_visit_ts": last_visit or None, "counts": self.store.counts(),
                 "review": [{k: m.get(k) for k in ("message_id", "ts", "from_address", "subject", "snippet", "score")}
@@ -414,7 +414,9 @@ class Services:
             if fields["status"] not in STATUSES:
                 raise PhileasError("invalid", f"Unknown status {fields['status']}.")
         self.store.update_shipment(s["id"], **updates)
-        if fields.get("status"):
+        if fields.get("status") == DELIVERED:
+            self.engine.mark_received(s["id"])
+        elif fields.get("status"):
             self.engine.apply_status(s["id"], fields["status"], self.clock(), source="manual", text="Marcado a mano", quiet=True)
             if fields["status"] in FINAL:
                 self.store.update_shipment(s["id"], delivered_ts=self.clock() if fields["status"] == DELIVERED else s.get("delivered_ts"))

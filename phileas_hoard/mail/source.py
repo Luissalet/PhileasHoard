@@ -43,7 +43,7 @@ TRAVEL_TERMS = [
 ]
 GMAIL_QUERY = ("seguimiento OR enviado OR envío OR \"en camino\" OR reparto OR entrega OR paquete OR tracking OR shipped "
                "OR shipment OR dispatched OR \"out for delivery\" OR delivered OR expédié OR versandt OR spedito "
-               "OR 1Z OR \"número de seguimiento\" OR \"tracking number\"")
+               "OR 1Z OR \"número de seguimiento\" OR \"tracking number\" OR entregado OR order OR pedido OR receipt")
 TRAVEL_GMAIL = ("OR reserva OR reservation OR booking OR billete OR itinerary OR itinerario OR localizador OR \"tarjeta de embarque\" "
                 "OR \"boarding pass\" OR vuelo OR flight OR hotel OR e-ticket")
 
