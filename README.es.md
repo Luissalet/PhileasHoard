@@ -1,3 +1,7 @@
+> **Absorbido por [Hermes's Hoard](https://github.com/Luissalet/HermesHoard).** Todas sus funciones y datos continúan en la aplicación fusionada. Este repositorio queda como procedencia histórica; su entrada del Hub solo conserva compatibilidad y ya no puede lanzar un servidor propio. Inicia Hermes's Hoard y activa allí las funciones que quieras; todas están desactivadas por defecto. Los datos permanecen en sus carpetas originales.
+>
+> La documentación que sigue describe el motor incorporado; para instalación y uso actuales, consulta el repositorio enlazado.
+
 # Phileas's Hoard
 
 Seguimiento local de envíos y viajes. Lee los correos de envío de tu bandeja (tiendas, Amazon, transportistas), los convierte en envíos, sigue cada paquete con su transportista y te dice cuándo debería llegar y por qué: con la fecha del transportista, la fecha y la promesa de la tienda, y lo que tardaron de verdad tus paquetes anteriores. En la misma lectura de correo recoge las reservas de viaje (vuelos, trenes, autobuses, barcos, coche de alquiler, alojamientos), las agrupa en viajes, te avisa del check-in y reparte los gastos del viaje.

@@ -1,3 +1,7 @@
+> **Absorbed by [Hermes's Hoard](https://github.com/Luissalet/HermesHoard).** All functions and stored data continue in the merged app. This repository is retained as historical source; its Hub entry provides compatibility only and cannot launch a standalone server. Start Hermes's Hoard and explicitly enable the modules you need; all default OFF. Existing data stays in its original folders.
+>
+> The documentation below describes the incorporated engine. Use the linked repository for current installation and operation.
+
 # Phileas's Hoard
 
 A local shipment and trip tracker. It reads the shipping mail in your inbox (shops, Amazon, carriers), turns it into shipments, follows each parcel with its carrier, and tells you when it should arrive and why — from the carrier's own date, the shop's date and promise, and how long your past parcels actually took. The same mail pass reads travel bookings (flights, trains, buses, ferries, car rental, stays), groups them into trips, reminds you about check-in and shares the trip's expenses.
